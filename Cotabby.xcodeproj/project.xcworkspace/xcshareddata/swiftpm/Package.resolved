@@ -1,0 +1,42 @@
+{
+  "originHash" : "8799320681bcdf133449c0e65e4a32c0393e841c92c33dbeb99ada0342cf3d1b",
+  "pins" : [
+    {
+      "identity" : "cotabbyinference",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/FuJacob/cotabbyinference.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "6e1a9ba6d9fda6455ac7060077a81fbc8ada0439"
+      }
+    },
+    {
+      "identity" : "launchatlogin-modern",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sindresorhus/LaunchAtLogin-Modern",
+      "state" : {
+        "revision" : "a04ec1c363be3627734f6dad757d82f5d4fa8fcc",
+        "version" : "1.1.0"
+      }
+    },
+    {
+      "identity" : "sparkle",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sparkle-project/Sparkle",
+      "state" : {
+        "revision" : "066e75a8b3e99962685d6a90cdd5293ebffd9261",
+        "version" : "2.9.1"
+      }
+    },
+    {
+      "identity" : "swift-log",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-log.git",
+      "state" : {
+        "revision" : "92448c359f00ebe36ae97d3bd9086f13c7692b5a",
+        "version" : "1.13.2"
+      }
+    }
+  ],
+  "version" : 3
+}
