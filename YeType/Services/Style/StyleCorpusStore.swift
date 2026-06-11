@@ -42,6 +42,28 @@ final class StyleCorpusStore {
         UserDefaults.standard.bool(forKey: Self.enabledKey)
     }
 
+    /// Toggle the feature from the settings UI. Turning it off leaves the stored corpus intact so the
+    /// user can re-enable without losing what was learned; `clear()` is the explicit wipe.
+    func setEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Self.enabledKey)
+    }
+
+    /// The samples currently learned, newest last. For the settings "Style memory" view so the user
+    /// can see exactly what was captured.
+    func currentSamples() -> [String] {
+        queue.sync { samples }
+    }
+
+    /// Wipe the learned corpus (file + memory). The capture throttle resets too.
+    func clear() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.samples.removeAll()
+            self.lastCaptureAt = nil
+            Self.save(self.samples, to: self.fileURL)
+        }
+    }
+
     /// Records a candidate sample drawn from the user's surrounding text. No-op when the feature is
     /// off or when called again inside the throttle window. The newest complete sentence in `text`
     /// is preferred; we never store the in-progress trailing fragment.

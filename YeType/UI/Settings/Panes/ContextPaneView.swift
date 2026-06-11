@@ -29,12 +29,87 @@ struct ContextPaneView: View {
     private static let previewEditorMinHeight: CGFloat = 132
     private static let extendedContextEditorMinHeight: CGFloat = 220
 
+    @State private var styleLearningEnabled = StyleCorpusStore.shared.isEnabled
+    @State private var styleSamples: [String] = StyleCorpusStore.shared.currentSamples()
+
     var body: some View {
         SettingsPaneScaffold {
             livePreviewSection
+            styleMemorySection
             extendedContextSection
             howThisIsUsedSection
         }
+        .onAppear { refreshStyleMemory() }
+    }
+
+    // MARK: - Style memory (learns the user's voice)
+
+    private var styleMemorySection: some View {
+        Section("Style memory") {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("Learn my writing style", isOn: Binding(
+                    get: { styleLearningEnabled },
+                    set: { newValue in
+                        styleLearningEnabled = newValue
+                        StyleCorpusStore.shared.setEnabled(newValue)
+                        refreshStyleMemory()
+                    }
+                ))
+                .font(.body)
+
+                Text("When on, YeType quietly remembers short samples of sentences you write and " +
+                    "feeds them to the model so suggestions sound more like you. Everything stays on " +
+                    "this Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if styleLearningEnabled {
+                    if styleSamples.isEmpty {
+                        Text("Nothing learned yet — keep typing and samples will appear here.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(styleSamples.enumerated()), id: \.offset) { _, sample in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text("•")
+                                    Text(sample)
+                                        .font(.caption)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        .padding(8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color(nsColor: .textBackgroundColor))
+                        )
+
+                        HStack {
+                            Text("\(styleSamples.count) learned")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                            Button("Refresh") { refreshStyleMemory() }
+                            Button("Clear", role: .destructive) {
+                                StyleCorpusStore.shared.clear()
+                                // Give the async wipe a beat, then reflect it.
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    refreshStyleMemory()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    private func refreshStyleMemory() {
+        styleLearningEnabled = StyleCorpusStore.shared.isEnabled
+        styleSamples = StyleCorpusStore.shared.currentSamples()
     }
 
     // MARK: - Live preview
