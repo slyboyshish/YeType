@@ -1583,15 +1583,15 @@
 				LastUpgradeCheck = 2600;
 				TargetAttributes = {
 					0AE0AB226336319DD8413AE4 = {
-						DevelopmentTeam = G946M8K23B;
+						DevelopmentTeam = W9PHGU8Q2H;
 						ProvisioningStyle = Automatic;
 					};
 					C88312C5FE47DE9A1CA6187A = {
-						DevelopmentTeam = G946M8K23B;
+						DevelopmentTeam = W9PHGU8Q2H;
 						ProvisioningStyle = Automatic;
 					};
 					D7898BECD525C3A7C230634E = {
-						DevelopmentTeam = G946M8K23B;
+						DevelopmentTeam = W9PHGU8Q2H;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -2321,7 +2321,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = G946M8K23B;
+				DEVELOPMENT_TEAM = W9PHGU8Q2H;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -2418,7 +2418,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = G946M8K23B;
+				DEVELOPMENT_TEAM = W9PHGU8Q2H;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;

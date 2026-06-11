@@ -145,7 +145,7 @@ extension SuggestionCoordinator {
     /// offering, or applying a correction; `false` proceeds with a normal continuation. Kept separate
     /// so `generateFromCurrentFocus` stays within the project's cyclomatic-complexity budget.
     private func handleTypoGate(rawContext: FocusedInputSnapshot, workID: UInt64) -> Bool {
-        switch TypoGate.resolve(
+        let decision = TypoGate.resolve(
             precedingText: rawContext.precedingText,
             settings: TypoGate.Settings(
                 suppressCompletionsOnTypo: settingsSnapshot.suppressCompletionsOnTypo,
@@ -159,7 +159,10 @@ extension SuggestionCoordinator {
                     precedingText: rawContext.precedingText
                 )
             }
-        ) {
+        )
+        let tailWord = CurrentWordExtractor.extractTrailingWord(from: rawContext.precedingText)?.result.word ?? "<none>"
+        YeTypeLogger.suggestion.notice("TYPOGATE word=\(tailWord) suppress=\(settingsSnapshot.suppressCompletionsOnTypo) offer=\(settingsSnapshot.offerTypoCorrections) isTypo=\(spellChecker.isTypo(tailWord)) decision=\(String(describing: decision))")
+        switch decision {
         case .proceed:
             return false
         case .suppress:

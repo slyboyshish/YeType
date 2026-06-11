@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import Logging
 
 /// File overview:
 /// Resolves caret and input-frame geometry from AX elements. This file centralizes the fragile
@@ -76,6 +77,7 @@ struct AXTextGeometryResolver {
                 anchorFrame: cocoaAnchorFrame
             )
             if rectIsNearAnchor(cocoaRect, anchor: cocoaAnchorFrame) {
+                YeTypeLogger.focus.notice("CARET branch=1-zeroLenExact loc=\(selection.location) rect=\(cocoaRect.debugDescription)")
                 return CaretGeometryResult(
                     rect: normalizedCaretRect(fromZeroLengthRangeRect: cocoaRect),
                     quality: .exact
@@ -91,6 +93,7 @@ struct AXTextGeometryResolver {
                 fromAccessibilityRect: markerRect,
                 anchorFrame: cocoaAnchorFrame
             )
+            YeTypeLogger.focus.notice("CARET branch=1.5-textMarker loc=\(selection.location) rect=\(cocoaRect.debugDescription)")
             return CaretGeometryResult(
                 rect: normalizedCaretRect(fromZeroLengthRangeRect: cocoaRect),
                 quality: .exact
@@ -111,6 +114,7 @@ struct AXTextGeometryResolver {
                 anchorFrame: cocoaAnchorFrame
             )
             if rectIsNearAnchor(cocoaRect, anchor: cocoaAnchorFrame) {
+                YeTypeLogger.focus.notice("CARET branch=2-charBefore loc=\(selection.location) charRect=\(cocoaRect.debugDescription)")
                 return CaretGeometryResult(
                     rect: CGRect(
                         x: cocoaRect.maxX, y: cocoaRect.minY, width: 2, height: cocoaRect.height),
@@ -129,6 +133,7 @@ struct AXTextGeometryResolver {
                 parentSelection: selectionInTextValue,
                 parentText: parentText
             ) {
+                YeTypeLogger.focus.notice("CARET branch=2.5-childTextRuns loc=\(selectionInTextValue.location) rect=\(result.rect.debugDescription)")
                 return result
             }
         }
@@ -144,12 +149,14 @@ struct AXTextGeometryResolver {
                     selection: selectionInTextValue
                 )
                 let clampedX = min(estimatedX, cocoaRect.maxX)
+                YeTypeLogger.focus.notice("CARET branch=3-frameEstimate loc=\(selectionInTextValue.location) frame=\(cocoaRect.debugDescription) estX=\(clampedX)")
                 return CaretGeometryResult(
                     rect: CGRect(
                         x: clampedX, y: cocoaRect.minY, width: 2, height: cocoaRect.height),
                     quality: .estimated
                 )
             }
+            YeTypeLogger.focus.notice("CARET branch=3-frameOnly loc=\(selectionInTextValue.location) frame=\(cocoaRect.debugDescription)")
             return CaretGeometryResult(rect: cocoaRect, quality: .estimated)
         }
 

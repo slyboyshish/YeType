@@ -28,16 +28,27 @@ enum CaretGeometrySelector {
     /// `.exact` and `.derived` are trusted as-is; only `.estimated`, unknown quality, or a missing
     /// rect justify the ~200-node walk. The walk pins a CPU core when run on every keystroke, so we
     /// avoid it whenever the primary geometry is already good enough.
+    /// A `.derived` rect taller than this is treated as a multi-line union (e.g. Chrome / Claude
+    /// AXTextArea answering BoundsForRange with the bounds of the whole wrapped field) rather than a
+    /// single caret line. Single-line carets stay well under this even at large font sizes, so the
+    /// expensive deep walk remains skipped for them and only runs to recover the active line once the
+    /// field has actually wrapped — exactly the case where ghost text was being misplaced below.
+    static let multiLineDerivedHeightThreshold: CGFloat = 50
+
     static func shouldSearchDeep(
         primaryRect: CGRect?,
         primaryQuality: CaretGeometryQuality?
     ) -> Bool {
-        guard primaryRect != nil else {
+        guard let primaryRect else {
             return true
         }
         switch primaryQuality {
-        case .exact, .derived:
+        case .exact:
             return false
+        case .derived:
+            // Single-line derived rect is trusted as-is; a multi-line union rect is unusable for
+            // caret placement, so run the walk to recover the active line's exact rect.
+            return primaryRect.height > multiLineDerivedHeightThreshold
         default:
             return true
         }
@@ -65,6 +76,17 @@ enum CaretGeometrySelector {
             )
         }
         if let primary = primaryRect, primaryQuality == .derived {
+            // A multi-line derived rect is a union of all wrapped lines (`shouldSearchDeep` ran the
+            // walk for it). The deep walk recovers the active line's exact leaf rect, which is what
+            // we want for caret placement — prefer it over the unusable union bounds. A single-line
+            // derived rect has no deep walk (or no better exact result), so it ships as-is.
+            if primary.height > multiLineDerivedHeightThreshold,
+               let deep = deepResult, deep.quality == .exact {
+                return Selected(
+                    rect: deep.rect, source: "exact deep (multiline derived)", quality: .exact,
+                    observedCharWidth: deep.observedCharWidth
+                )
+            }
             return Selected(
                 rect: primary, source: "derived primary", quality: .derived,
                 observedCharWidth: primaryObservedCharWidth
