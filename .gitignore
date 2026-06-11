@@ -1,0 +1,8 @@
+build/
+DerivedData/
+*.xcuserstate
+.DS_Store
+xcuserdata/
+
+.build/
+YeTypeInference/.build/

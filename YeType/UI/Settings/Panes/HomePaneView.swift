@@ -1,0 +1,70 @@
+import SwiftUI
+
+/// File overview:
+/// "Home" detail pane: the welcoming landing surface of the Settings window and the first sidebar
+/// row. It introduces what YeType is, replays the same inline-autocomplete and inline-emoji demos
+/// shown on the final onboarding screen (`OnboardingFeatureShowcase`), and surfaces the Support
+/// YeType call to action. It is the default pane on a fresh install; returning users still land on
+/// their last-viewed pane.
+///
+/// The feature demos are inert (they never touch the real suggestion pipeline). They are passed
+/// `autoplay: false` here so the looping animations stay idle on a static frame until the pointer is
+/// over them, keeping this pane cheap to leave open. (Onboarding uses the default autoplay.)
+struct HomePaneView: View {
+    var body: some View {
+        SettingsPaneScaffold {
+            Section { introHeader }
+            Section("Support") { supportRow }
+            Section("See it in action") {
+                OnboardingFeatureShowcase(autoplay: false, showsMacroReference: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var introHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image("YeTypeLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 44, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Welcome to YeType")
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    Text("Local-first AI autocomplete for macOS")
+                        .font(.system(size: 12, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text("Ghost-text suggestions in any field, accepted with Tab. Everything runs on your device.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var supportRow: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(
+                "YeType is free and open source, maintained by two students in our spare time. "
+                + "If it's useful to you, supporting development helps us keep improving it."
+            )
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            if let supportURL = URL(string: "https://github.com/slyboyshish/YeType") {
+                Link(destination: supportURL) {
+                    Label("Support YeType", systemImage: "heart.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
+            }
+        }
+    }
+}

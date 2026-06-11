@@ -1,0 +1,5 @@
+module YeTypeInference {
+    header "YeTypeInferenceEngine.h"
+    requires cplusplus
+    export *
+}

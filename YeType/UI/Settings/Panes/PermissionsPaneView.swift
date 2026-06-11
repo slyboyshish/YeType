@@ -1,0 +1,110 @@
+import SwiftUI
+
+/// File overview:
+/// "Permissions" detail pane of the redesigned Settings window. Renders status rows for the three
+/// permissions YeType requires (Accessibility, Input Monitoring, Screen Recording) and offers a
+/// shortcut into the relevant System Settings pane when one of them is missing.
+struct PermissionsPaneView: View {
+    @ObservedObject var permissionManager: PermissionManager
+    let permissionGuidanceController: PermissionGuidanceController
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        SettingsPaneScaffold(callout: callout) {
+            Section("Permissions") {
+                Text("YeType needs Accessibility and Input Monitoring for autocomplete. " +
+                    "Screen Recording is optional and adds on-screen visual context.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                SettingsPermissionRow(
+                    permission: .accessibility,
+                    description: "Lets YeType see which text field has focus and read its contents " +
+                        "so it knows what to continue.",
+                    systemImage: "accessibility",
+                    granted: permissionManager.accessibilityGranted,
+                    permissionGuidanceController: permissionGuidanceController
+                )
+
+                SettingsPermissionRow(
+                    permission: .inputMonitoring,
+                    description: "Lets YeType see your keystrokes so it can detect when to suggest " +
+                        "and which key you used to accept.",
+                    systemImage: "keyboard",
+                    granted: permissionManager.inputMonitoringGranted,
+                    permissionGuidanceController: permissionGuidanceController
+                )
+
+                SettingsPermissionRow(
+                    permission: .screenRecording,
+                    description: "Optional. Lets YeType screenshot the focused window for extra " +
+                        "context. Without it, YeType runs in Fast Mode using only the text you've typed.",
+                    systemImage: "camera.viewfinder",
+                    granted: permissionManager.screenRecordingGranted,
+                    permissionGuidanceController: permissionGuidanceController
+                )
+            }
+        }
+        .onAppear { permissionManager.refresh() }
+        // Re-check on scene activation: .onAppear does not fire when returning from
+        // System Settings, so permission status would otherwise stay stale.
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                permissionManager.refresh()
+            }
+        }
+    }
+
+    /// Top-of-pane callout when any required permission is still missing. The full picture stays
+    /// in the rows below; this just surfaces the broken state without making the user read each row
+    /// in turn.
+    private var callout: SettingsPaneCallout? {
+        guard !permissionManager.requiredPermissionsGranted else {
+            return nil
+        }
+        return SettingsPaneCallout(
+            tone: .warning,
+            message: "YeType needs more access to run. Grant the permissions below to enable autocomplete."
+        )
+    }
+
+}
+
+/// One permission row in the Settings pane. Tracks its own button frame so the shared
+/// `PermissionGuidanceController` can anchor its drag-helper overlay near the Enable button
+/// (mirroring the onboarding flow) instead of dumping the user into System Settings cold.
+private struct SettingsPermissionRow: View {
+    let permission: YeTypePermissionKind
+    let description: String
+    let systemImage: String
+    let granted: Bool
+    let permissionGuidanceController: PermissionGuidanceController
+
+    @State private var actionButtonFrame: CGRect = .zero
+
+    var body: some View {
+        HStack(spacing: 10) {
+            SettingsRowLabel(title: permission.compactRowTitle, description: description, systemImage: systemImage)
+            Spacer(minLength: 0)
+            // Optional permissions reuse the required rows' styling and read as real permissions; the
+            // "(Optional)" suffix in `compactRowTitle` is what marks them optional, not a separate
+            // neutral "Off" state or "Enable" verb. The pane-level warning callout still fires for
+            // required permissions only, so nothing here claims autocomplete is broken when just
+            // Screen Recording is missing.
+            Text(granted ? "Granted" : "Needs Access")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(granted ? .green : .orange)
+
+            if !granted {
+                Button("Grant Access") {
+                    permissionGuidanceController.requestAccess(
+                        for: permission,
+                        sourceFrameInScreen: actionButtonFrame
+                    )
+                }
+                .controlSize(.small)
+                .background(ScreenFrameReader(frameInScreen: $actionButtonFrame))
+            }
+        }
+    }
+}

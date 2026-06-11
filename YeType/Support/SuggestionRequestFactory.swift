@@ -1,0 +1,240 @@
+import Foundation
+
+/// File overview:
+/// Owns the pure rules for deciding whether YeType should generate and, when it should, how the
+/// request payload and backend-specific prompt preview are constructed.
+/// This keeps prompt policy out of the coordinator.
+///
+/// Architectural role:
+/// `SuggestionCoordinator` decides when a generation attempt should happen. This factory decides
+/// what the request should contain once that decision has already been made.
+struct SuggestionRequestBuildResult: Equatable, Sendable {
+    /// The engine-facing request plus the selected backend's prompt preview shown in diagnostics.
+    /// Keeping these together prevents preview text from drifting away from the chosen engine.
+    let request: SuggestionRequest
+    let promptPreview: String
+}
+
+/// Pure prompt-policy surface for the autocomplete pipeline.
+/// This type has no access to UserDefaults, tasks, overlays, or runtime services.
+enum SuggestionRequestFactory {
+    private static let maxClipboardContextCharacters = 1_200
+
+    /// Require at least one non-whitespace character so we don't suggest on a blank field.
+    /// No trailing-space gate — the debounce handles rapid keystroke settling, and
+    /// `SuggestionTextNormalizer` applies deterministic space management on the output side.
+    static func shouldGenerateSuggestion(for precedingText: String) -> Bool {
+        let trimmed = precedingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty
+    }
+
+    /// Builds the generation request plus the exact prompt preview used by YeType's diagnostics UI.
+    static func buildRequest(
+        context: FocusedInputContext,
+        settings: SuggestionSettingsSnapshot,
+        configuration: SuggestionConfiguration,
+        clipboardContext: String? = nil,
+        visualContextSummary: String? = nil
+    ) -> SuggestionRequestBuildResult {
+        let prefixText = truncatedPromptPrefix(
+            from: context.precedingText,
+            configuration: configuration,
+            engine: settings.selectedEngine
+        )
+        let completionLengthInstruction = settings.effectiveWordRange.promptInstruction
+        let userName = activeUserName(settings: settings)
+        // Custom rules are hidden from users (CustomRulesCatalog.isUserFacingEnabled == false): the
+        // base-model OSS path cannot obey free-text instructions and the rule text leaks into output,
+        // so injection is suppressed on every engine. Stored rules survive untouched, so flipping the
+        // flag restores this. When enabled, the value is already normalized (trimmed/deduped/capped)
+        // by SuggestionSettingsModel.setRules.
+        let customRules = CustomRulesCatalog.isUserFacingEnabled ? settings.customRules : []
+        // The settings model length-caps but does NOT trim whitespace (trimming on every keystroke
+        // would prevent the user from typing a space at the end of a word in the editor). Do the
+        // trim here, once per request, and collapse a whitespace-only body back to nil so renderers
+        // skip the section heading entirely.
+        let trimmedExtendedContext = settings.extendedContext
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let activeExtendedContext = trimmedExtendedContext.isEmpty ? nil : trimmedExtendedContext
+        // nil when the user declared no languages — the renderers then just match the surrounding text.
+        let languageInstruction = LanguageCatalog.promptInstruction(for: settings.responseLanguages)
+        let boundedClipboardContext = activeClipboardContext(
+            rawContext: clipboardContext,
+            settings: settings,
+            prefixText: prefixText
+        )
+        let boundedVisualContextSummary = activeVisualContextSummary(
+            rawSummary: visualContextSummary
+        )
+        // YeType 2 is a base-model continuation product on the Open Source path, so the local
+        // prompt is always the base render: no instruction blob, prefix last, trailing-trimmed.
+        // Custom instructions and persona condition the output rather than being obeyed. The
+        // Foundation Models path builds its own messages from these same request fields, so this
+        // prompt string is only consumed by the llama engine.
+        let prompt = BaseCompletionPromptRenderer.prompt(
+            prefixText: prefixText,
+            applicationName: context.applicationName,
+            userName: userName,
+            customRules: customRules,
+            extendedContext: activeExtendedContext,
+            languageInstruction: languageInstruction,
+            clipboardContext: boundedClipboardContext,
+            visualContextSummary: boundedVisualContextSummary
+        )
+
+        let request = SuggestionRequest(
+            context: context,
+            prefixText: prefixText,
+            prompt: prompt,
+            generation: context.generation,
+            maxPredictionTokens: activeMaxPredictionTokens(
+                configuration: configuration,
+                wordRange: settings.effectiveWordRange,
+                responseLanguages: settings.responseLanguages,
+                isMultiLineEnabled: settings.isMultiLineEnabled
+            ),
+            temperature: configuration.temperature,
+            topK: configuration.topK,
+            topP: configuration.topP,
+            minP: configuration.minP,
+            repetitionPenalty: configuration.repetitionPenalty,
+            randomSeed: configuration.randomSeed,
+            maxSuffixCharacters: configuration.maxSuffixCharacters,
+            completionLengthInstruction: completionLengthInstruction,
+            userName: userName,
+            customRules: customRules,
+            extendedContext: activeExtendedContext,
+            languageInstruction: languageInstruction,
+            clipboardContext: boundedClipboardContext,
+            visualContextSummary: boundedVisualContextSummary,
+            isMultiLineEnabled: settings.isMultiLineEnabled,
+            requestID: RequestID.generate()
+        )
+
+        return SuggestionRequestBuildResult(
+            request: request,
+            promptPreview: promptPreview(for: request, selectedEngine: settings.selectedEngine)
+        )
+    }
+
+    /// Keep only the latest short word tail to prevent long stale context from steering output.
+    ///
+    /// Exposed (non-private) so the coordinator can compute the same bounded window before
+    /// calling the relevance filter, ensuring the filter and the downstream distiller evaluate
+    /// token overlap against an identical prefix. The `engine` parameter selects between the
+    /// llama-sized window (small, low latency) and the FM-sized window (larger, fits Apple's
+    /// shared context). Default arg keeps existing call sites and external usages source-compatible.
+    static func truncatedPromptPrefix(
+        from precedingText: String,
+        configuration: SuggestionConfiguration,
+        engine: SuggestionEngineKind = .llamaOpenSource
+    ) -> String {
+        let maxCharacters: Int
+        let maxWords: Int
+        switch engine {
+        case .appleIntelligence:
+            maxCharacters = configuration.maxPrefixCharactersFoundationModel
+            maxWords = configuration.maxPrefixWordsFoundationModel
+        case .llamaOpenSource:
+            maxCharacters = configuration.maxPrefixCharacters
+            maxWords = configuration.maxPrefixWords
+        }
+
+        let characterWindow = String(precedingText.suffix(maxCharacters))
+        let trailingWords = characterWindow
+            .split(whereSeparator: { $0.isWhitespace })
+            .suffix(maxWords)
+            .map(String.init)
+            .joined(separator: " ")
+
+        return trailingWords.isEmpty ? characterWindow : trailingWords
+    }
+
+    private static func activeUserName(
+        settings: SuggestionSettingsSnapshot
+    ) -> String? {
+        settings.userName
+    }
+
+    private static func activeClipboardContext(
+        rawContext: String?,
+        settings: SuggestionSettingsSnapshot,
+        prefixText: String
+    ) -> String? {
+        guard settings.isClipboardContextEnabled,
+              let rawContext
+        else {
+            return nil
+        }
+
+        let sanitizedContext = PromptContextSanitizer.sanitize(rawContext)
+        guard !sanitizedContext.isEmpty,
+              PromptContextSanitizer.containsAlphanumericSignal(sanitizedContext)
+        else {
+            return nil
+        }
+
+        let distilled = ClipboardContentDistiller.distill(
+            clipboard: sanitizedContext,
+            prefixText: prefixText
+        )
+        return clippedText(distilled, maxCharacters: maxClipboardContextCharacters)
+    }
+
+    private static func activeVisualContextSummary(rawSummary: String?) -> String? {
+        guard let rawSummary else {
+            return nil
+        }
+
+        let sanitizedSummary = PromptContextSanitizer.sanitize(rawSummary)
+        guard !sanitizedSummary.isEmpty,
+              PromptContextSanitizer.containsAlphanumericSignal(sanitizedSummary)
+        else {
+            return nil
+        }
+
+        return sanitizedSummary
+    }
+
+    private static func clippedText(_ text: String, maxCharacters: Int) -> String {
+        guard text.count > maxCharacters else {
+            return text
+        }
+
+        let suffix = "..."
+        let allowedPrefixCount = max(maxCharacters - suffix.count, 0)
+        return String(text.prefix(allowedPrefixCount))
+            .trimmingCharacters(in: .whitespacesAndNewlines) + suffix
+    }
+
+    /// Picks the per-request token budget from the *effective* word range (preset or custom) and
+    /// the language-aware tokens-per-word factor. The configuration floor still wins so multi-line
+    /// off + a tiny range can't drop us below the safe baseline; the * 2 cap on multi-line caps the
+    /// worst case so a 20-word German custom range can't unilaterally double the longest budget.
+    private static func activeMaxPredictionTokens(
+        configuration: SuggestionConfiguration,
+        wordRange: SuggestionWordRange,
+        responseLanguages: [String],
+        isMultiLineEnabled: Bool
+    ) -> Int {
+        let tokensPerWord = LanguageCatalog.effectiveTokensPerWord(for: responseLanguages)
+        let languageAware = SuggestionWordRange.predictionTokenBudget(
+            highWords: wordRange.highWords,
+            tokensPerWord: tokensPerWord
+        )
+        let base = max(configuration.maxPredictionTokens, languageAware)
+        return isMultiLineEnabled ? min(base * 2, 120) : base
+    }
+
+    private static func promptPreview(
+        for request: SuggestionRequest,
+        selectedEngine: SuggestionEngineKind
+    ) -> String {
+        switch selectedEngine {
+        case .appleIntelligence:
+            return FoundationModelPromptRenderer.promptPreview(for: request)
+        case .llamaOpenSource:
+            return request.prompt
+        }
+    }
+}
