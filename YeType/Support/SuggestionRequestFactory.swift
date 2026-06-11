@@ -55,7 +55,16 @@ enum SuggestionRequestFactory {
         // skip the section heading entirely.
         let trimmedExtendedContext = settings.extendedContext
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let activeExtendedContext = trimmedExtendedContext.isEmpty ? nil : trimmedExtendedContext
+        // Style learning (opt-in, off by default): capture a rolling sample of the user's own writing
+        // and fold it into the extended-context section so the base model conditions on their voice.
+        // The block changes rarely, so it stays a stable prompt prefix and is KV-cached by the runtime
+        // rather than re-encoded per keystroke. No-op unless the user enabled the feature.
+        StyleCorpusStore.shared.record(context.precedingText)
+        let styleBlock = StyleCorpusStore.shared.styleBlock()
+        let mergedExtendedContext = [trimmedExtendedContext.isEmpty ? nil : trimmedExtendedContext, styleBlock]
+            .compactMap { $0 }
+            .joined(separator: "\n\n")
+        let activeExtendedContext = mergedExtendedContext.isEmpty ? nil : mergedExtendedContext
         // nil when the user declared no languages — the renderers then just match the surrounding text.
         let languageInstruction = LanguageCatalog.promptInstruction(for: settings.responseLanguages)
         let boundedClipboardContext = activeClipboardContext(

@@ -222,6 +222,7 @@
 		6549DEBBDDFA8A9D0DA2EF07 /* HuggingFaceModelBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 536A3F480B23E68FA04293C3 /* HuggingFaceModelBrowserView.swift */; };
 		656DC9C2A5CBE730ED338939 /* FocusCapabilityFlickerGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD2A031C14EFBFCF72920A39 /* FocusCapabilityFlickerGate.swift */; };
 		65927DA0FD29DC367CA04F01 /* InMemoryLogging in Frameworks */ = {isa = PBXBuildFile; productRef = 68D5038727A0444EB81B229F /* InMemoryLogging */; };
+		66C568FC1032CD0614786A01 /* StyleCorpusStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C2984D7844517368ADA39DF /* StyleCorpusStore.swift */; };
 		66E17B9D868AC6676C93706C /* SuggestionCoordinator+Lifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 627F7B1F4A622CD6026AD4B7 /* SuggestionCoordinator+Lifecycle.swift */; };
 		6724C0F6BB98F4AB54C1F6A1 /* YeTypeInference in Frameworks */ = {isa = PBXBuildFile; productRef = 7F5F4863CCD5CDCEE4837CB1 /* YeTypeInference */; };
 		674DFFE4C7AAB36130D5E440 /* InMemoryLogging in Frameworks */ = {isa = PBXBuildFile; productRef = DC5BFE87D885DF4CACB01E04 /* InMemoryLogging */; };
@@ -296,6 +297,7 @@
 		8810F3B698005FBA66EDA30C /* DecodeStopPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC278497741309BCB2CA5FF6 /* DecodeStopPolicy.swift */; };
 		882C0B4A51844865B7B3F30A /* FocusCapabilityResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B09F0033B69C4B8EE71B637 /* FocusCapabilityResolver.swift */; };
 		888BB0667B71F4618299086D /* SpellingLanguageResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 811EF8E67452C9EEBA7D34A8 /* SpellingLanguageResolver.swift */; };
+		88B43A12CEB3C67095C7761A /* StyleCorpusStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C2984D7844517368ADA39DF /* StyleCorpusStore.swift */; };
 		8944AC5C837A208B6B78AD73 /* SuggestionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4302892A64B54E1B3C0E6C2 /* SuggestionCoordinator.swift */; };
 		897B00661B0799D7A64ABFE2 /* GhostFontSizeStabilizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80EDF4222C07C72EE5E94AE0 /* GhostFontSizeStabilizerTests.swift */; };
 		89828C9EC534BCEFCDFA69DD /* OnboardingTemplateFeatureList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72181A278399E39A8291AC88 /* OnboardingTemplateFeatureList.swift */; };
@@ -682,6 +684,7 @@
 		4939483475E6A6427ADE4289 /* GhostTextPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhostTextPreview.swift; sourceTree = "<group>"; };
 		4B5CE71CA9CBB3370CAF563A /* ClipboardRelevanceFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardRelevanceFilterTests.swift; sourceTree = "<group>"; };
 		4BB95DCBBFFD9F4846333AC7 /* TypoCaseTransferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypoCaseTransferTests.swift; sourceTree = "<group>"; };
+		4C2984D7844517368ADA39DF /* StyleCorpusStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleCorpusStore.swift; sourceTree = "<group>"; };
 		4E073918E9B24019D318280F /* AXHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXHelper.swift; sourceTree = "<group>"; };
 		4E9F37F080282A310BBEFEA0 /* SuggestionAvailabilityEvaluatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionAvailabilityEvaluatorTests.swift; sourceTree = "<group>"; };
 		4FE80BBEFEDD1DCF35A358E3 /* PermissionHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionHostApp.swift; sourceTree = "<group>"; };
@@ -1088,6 +1091,14 @@
 			path = Visual;
 			sourceTree = "<group>";
 		};
+		66CE8BE666D8EE14FE799C95 /* Style */ = {
+			isa = PBXGroup;
+			children = (
+				4C2984D7844517368ADA39DF /* StyleCorpusStore.swift */,
+			);
+			path = Style;
+			sourceTree = "<group>";
+		};
 		6F49B35E4F93F3CEB31AA9B6 /* Emoji */ = {
 			isa = PBXGroup;
 			children = (
@@ -1138,6 +1149,7 @@
 				018B47DE427BD9B1114A1AFC /* Power */,
 				8684590A3B44E4D610F868BD /* Runtime */,
 				C3B6FD00642A8185922FD5BD /* Spelling */,
+				66CE8BE666D8EE14FE799C95 /* Style */,
 				C1E1092FD70F1AAC00D32498 /* Suggestion */,
 				F2F7623D8CD76111799921AB /* UI */,
 				ECF576709D8DE6F8EA6D8937 /* Utilities */,
@@ -1845,6 +1857,7 @@
 				328DE1A4E94C8CDADB863327 /* SpellingDictionaryCatalog.swift in Sources */,
 				6D9260C41CE11A80401B90A0 /* SpellingDictionaryPicker.swift in Sources */,
 				888BB0667B71F4618299086D /* SpellingLanguageResolver.swift in Sources */,
+				88B43A12CEB3C67095C7761A /* StyleCorpusStore.swift in Sources */,
 				2E546810F77A9840370BBCF9 /* SuggestionAvailabilityEvaluator.swift in Sources */,
 				7C86096E61614EEB917E172E /* SuggestionCoordinator+Acceptance.swift in Sources */,
 				46C15A9E467D244E1BDEABCF /* SuggestionCoordinator+Input.swift in Sources */,
@@ -2062,6 +2075,7 @@
 				A0126C3F693C571AFD2D59F6 /* SpellingDictionaryCatalog.swift in Sources */,
 				F41C81348B149FAF00A27423 /* SpellingDictionaryPicker.swift in Sources */,
 				E7DFD9873D22A91BDCBC8B82 /* SpellingLanguageResolver.swift in Sources */,
+				66C568FC1032CD0614786A01 /* StyleCorpusStore.swift in Sources */,
 				46A1EBB5535B8D8D9C471485 /* SuggestionAvailabilityEvaluator.swift in Sources */,
 				8BDFF85AE29F5C6AA424F3F0 /* SuggestionCoordinator+Acceptance.swift in Sources */,
 				98C2B578F61B21F8389054EE /* SuggestionCoordinator+Input.swift in Sources */,
