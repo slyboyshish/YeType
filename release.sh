@@ -44,21 +44,6 @@ echo "▶ Сборка DMG..."
 rm -rf "$STAGE" "$DMG"; mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-cat > "$STAGE/ЧИТАТЬ — как открыть.txt" << 'TXT'
-1. Перетащи YeType в папку Applications (рядом).
-2. Запусти YeType двойным кликом. Появится «macOS не может проверить разработчика».
-   Нажми «Готово», открой Системные настройки → Конфиденциальность и безопасность,
-   пролистай вниз — там будет «YeType заблокировано» → нажми «Всё равно открыть».
-   Запусти снова → «Открыть». Терминал НЕ нужен.
-3. Дай доступ: Настройки → Конфиденциальность → Универсальный доступ → включи YeType.
-4. При первом запуске приложение само скачает языковую модель (~2-3 ГБ, нужен интернет).
-
-Дальше обновления приходят сами — внутри приложения «Проверить обновления».
-
-(Запасной вариант — ТОЛЬКО если macOS пишет «повреждено, переместить в корзину»:
- открой Терминал и выполни:
-     xattr -dr com.apple.quarantine /Applications/YeType.app )
-TXT
 hdiutil create -volname "YeType" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGE"
 
@@ -83,12 +68,27 @@ cat > appcast.xml << EOF
 </rss>
 EOF
 
+NOTES=$(cat << 'NOTESEOF'
+### Установка
+1. Откройте DMG и перетащите **YeType** в папку **Applications**.
+2. Запустите. Если появится «macOS не может проверить разработчика» — откройте
+   **Системные настройки → Конфиденциальность и безопасность**, пролистайте вниз
+   и нажмите **«Всё равно открыть»**. Запустите ещё раз → «Открыть».
+3. Включите доступ: **Настройки → Конфиденциальность → Универсальный доступ → YeType**.
+
+Языковая модель (~2–3 ГБ) скачается сама при первом запуске. Дальнейшие обновления приходят автоматически.
+
+Только для Mac на Apple Silicon (M1 и новее).
+NOTESEOF
+)
+
 echo "▶ Публикация релиза на GitHub..."
 if gh release view "v$VERSION" --repo "$REPO" >/dev/null 2>&1; then
   gh release upload "v$VERSION" "$DMG" --repo "$REPO" --clobber
+  gh release edit "v$VERSION" --repo "$REPO" --title "YeType $VERSION" --notes "$NOTES"
 else
   gh release create "v$VERSION" "$DMG" --repo "$REPO" \
-    --title "YeType $VERSION" --notes "YeType $VERSION"
+    --title "YeType $VERSION" --notes "$NOTES"
 fi
 
 echo "▶ Пуш ленты обновлений..."
