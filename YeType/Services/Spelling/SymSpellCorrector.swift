@@ -95,6 +95,17 @@ nonisolated final class SymSpellCorrector: @unchecked Sendable {
         return symSpell.frequency(of: word)
     }
 
+    /// Smeared-typing correction via consonant-skeleton matching ("зарбтлпо" -> "заработало"), for
+    /// inputs SymSpell's edit-distance-2 lookup can't reach. Recased to match the typo.
+    func skeletonCorrection(
+        for word: String,
+        language: SpellingDictionaryLanguage = .english
+    ) -> String? {
+        guard let symSpell = cachedIndexOrRequestLoad(for: language) else { return nil }
+        guard let candidate = symSpell.skeletonCorrection(for: word) else { return nil }
+        return TypoCaseTransfer.applying(caseOf: word, to: candidate)
+    }
+
     /// Conservative "is this a real typo" test for languages the OS spell checker can't judge
     /// (e.g. Russian). A bare frequency dictionary cannot distinguish a misspelling from a valid but
     /// rare/inflected word, so flagging anything merely absent from the top-N list constantly

@@ -153,8 +153,12 @@ extension SuggestionCoordinator {
 
     func handleInputEvent(_ event: CapturedInputEvent) -> Bool {
         // Feed the typing-burst gate (see `lastKeystrokeAt`): generation paths consult this to defer
-        // model work while keys are still streaming in.
-        lastKeystrokeAt = Date()
+        // model work while keys are still streaming in. Acceptance keys are excluded — after Tab the
+        // user is waiting for the phrase continuation, so the model should start immediately rather
+        // than sit out the burst window.
+        if event.kind != .acceptance && event.kind != .fullAcceptance {
+            lastKeystrokeAt = Date()
+        }
         // Give the emoji picker first look at every keystroke so it can drive its trigger state
         // machine. When a capture is involved, the picker owns the interaction: the suggestion
         // pipeline stands down and any lingering ghost text is cleared so it does not show behind the

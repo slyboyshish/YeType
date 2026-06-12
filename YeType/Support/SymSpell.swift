@@ -64,6 +64,50 @@ nonisolated final class SymSpell {
     /// Don't complete from a 1-letter stub (too ambiguous).
     private let completionMinPrefix = 2
 
+    /// Consonant skeleton -> index of the most frequent dictionary word with that skeleton. Fast
+    /// typing smears vowels ("зарбтлпо" for "заработало") far past SymSpell's edit-distance-2
+    /// reach, but the consonant backbone survives — matching on it recovers the intended word.
+    /// First writer wins per skeleton because dictionaries are loaded most-frequent-first.
+    private var skeletonBest: [String: Int32] = [:]
+
+    /// Vowels stripped to form the skeleton. Latin vowels included so the same index serves both
+    /// bundled dictionaries; й/ь/ъ also stripped because fast typing drops them like vowels.
+    private static let skeletonStripSet = Set("аеёиоуыэюяйьъaeiouy")
+
+    static func consonantSkeleton(of word: String) -> String {
+        String(word.filter { !skeletonStripSet.contains($0) })
+    }
+
+    /// Smeared-typing correction: the most frequent word whose consonant skeleton matches the
+    /// input's exactly, or within one deleted skeleton character (a stray extra consonant). Only
+    /// meaningful for words long enough to have a distinctive skeleton.
+    func skeletonCorrection(for input: String) -> String? {
+        let lowered = input.lowercased()
+        guard lowered.count >= 5 else { return nil }
+        let skeleton = Self.consonantSkeleton(of: lowered)
+        guard skeleton.count >= 4 else { return nil }
+        if let index = skeletonBest[skeleton] {
+            let word = wordsList[Int(index)]
+            if word != lowered { return word }
+        }
+        // Tolerate one stray consonant in the input's skeleton.
+        var best: String?
+        var bestCount: Int64 = -1
+        var working = Array(skeleton)
+        for i in working.indices {
+            let removed = working.remove(at: i)
+            if let index = skeletonBest[String(working)] {
+                let word = wordsList[Int(index)]
+                if word != lowered, let count = words[word], count > bestCount {
+                    best = word
+                    bestCount = count
+                }
+            }
+            working.insert(removed, at: i)
+        }
+        return best
+    }
+
     init(maxDictionaryEditDistance: Int = 2, prefixLength: Int = 7) {
         self.maxDictionaryEditDistance = maxDictionaryEditDistance
         self.prefixLength = prefixLength
@@ -164,6 +208,10 @@ nonisolated final class SymSpell {
         if chars.count > maxDictionaryWordLength { maxDictionaryWordLength = chars.count }
         for delete in editsPrefix(chars) {
             deletes[Self.hash(delete), default: []].append(index)
+        }
+        let skeleton = Self.consonantSkeleton(of: key)
+        if skeleton.count >= 3, skeletonBest[skeleton] == nil {
+            skeletonBest[skeleton] = index
         }
         // Adding a word invalidates the sorted completion index; it is rebuilt lazily on next query
         // (or eagerly at the end of `loadDictionary`).

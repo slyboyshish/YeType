@@ -402,8 +402,10 @@ extension SuggestionCoordinator {
         }
 
         // 3. Not a prefix and not a word → a misspelling. Offer a replace if the dictionary has a close
-        //    fix (handles errors the strict typo gate skipped, e.g. edit distance 2 or short words).
-        if let corrected = bestCorrection(for: partial, precedingText: rawContext.precedingText),
+        //    fix (edit distance ≤2), or — for smeared fast typing whose vowels got eaten
+        //    ("зарбтлпо" -> "заработало") — a consonant-skeleton match.
+        if let corrected = bestCorrection(for: partial, precedingText: rawContext.precedingText)
+               ?? symSpellCorrector.skeletonCorrection(for: partial, language: language),
            corrected.lowercased() != partial.lowercased() {
             presentCorrection(
                 typoWord: partial,
