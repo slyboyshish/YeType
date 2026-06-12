@@ -308,7 +308,14 @@ extension SuggestionCoordinator {
         let completionPreview = symSpellCorrector.bestCompletion(for: partial, language: language) ?? "<nil>"
         YeTypeLogger.suggestion.notice("MIDWORD word=\(partial) lang=\(language.rawValue) completion=\(completionPreview) contains=\(symSpellCorrector.contains(partial, language: language))")
 
-        // 1. Valid prefix → gray completion of the missing tail.
+        // 1. The word is already a complete, correct word → it's finished. Do NOT extend it (that is
+        //    what turned a typed "привет" into a "приветствие" suggestion). Let the model continue the
+        //    phrase on the next word instead.
+        if symSpellCorrector.contains(partial, language: language) {
+            return false
+        }
+
+        // 2. Unfinished but a valid prefix → gray completion of the missing tail.
         if let full = symSpellCorrector.bestCompletion(for: partial, language: language) {
             let fullChars = Array(full)
             if fullChars.count > partial.count {
@@ -321,11 +328,6 @@ extension SuggestionCoordinator {
                 )
                 return true
             }
-        }
-
-        // 2. Already a complete correct word → let the model continue the phrase.
-        if symSpellCorrector.contains(partial, language: language) {
-            return false
         }
 
         // 3. Not a prefix and not a word → a misspelling. Offer a replace if the dictionary has a close
