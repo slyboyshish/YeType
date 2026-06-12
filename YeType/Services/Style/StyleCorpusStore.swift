@@ -68,6 +68,37 @@ final class StyleCorpusStore {
         queue.sync { samples }
     }
 
+    /// Replaces the whole corpus with a user-edited set (from the settings "Style memory" editor).
+    /// Empties and length-bad entries are dropped; the newest `maxSamples` are kept.
+    func setSamples(_ newSamples: [String]) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let cleaned = newSamples
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            self.samples = cleaned.count > Self.maxSamples ? Array(cleaned.suffix(Self.maxSamples)) : cleaned
+            Self.save(self.samples, to: self.fileURL)
+        }
+    }
+
+    /// Records text the user accepted (e.g. a suggestion confirmed with Tab). Accepted text is
+    /// something the user endorsed in their own document, so it counts as their voice. Unlike `record`
+    /// there is no diff guard — the caller already knows this is user-chosen text — it is appended to
+    /// the typed buffer and completed sentences are flushed.
+    func recordAccepted(_ text: String) {
+        guard isEnabled else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.typedBuffer += (self.typedBuffer.isEmpty ? "" : " ") + trimmed
+            if self.typedBuffer.count > Self.maxTypedBufferChars {
+                self.typedBuffer = String(self.typedBuffer.suffix(Self.maxTypedBufferChars))
+            }
+            self.flushCompletedSentences()
+        }
+    }
+
     /// Wipe the learned corpus (file + memory). The capture throttle resets too.
     func clear() {
         queue.async { [weak self] in

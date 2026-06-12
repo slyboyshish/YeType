@@ -65,39 +65,61 @@ struct ContextPaneView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 if styleLearningEnabled {
+                    Text("These are editable — fix, delete, or add your own examples. Changes save " +
+                        "automatically.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     if styleSamples.isEmpty {
-                        Text("Nothing learned yet — keep typing and samples will appear here.")
+                        Text("Nothing learned yet — keep typing (or press Tab to accept suggestions) " +
+                            "and samples will appear here. You can also add your own with the button below.")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     } else {
                         VStack(alignment: .leading, spacing: 6) {
-                            ForEach(Array(styleSamples.enumerated()), id: \.offset) { _, sample in
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                    Text("•")
-                                    Text(sample)
-                                        .font(.caption)
-                                        .fixedSize(horizontal: false, vertical: true)
+                            ForEach(styleSamples.indices, id: \.self) { index in
+                                HStack(spacing: 8) {
+                                    TextField("", text: Binding(
+                                        get: { index < styleSamples.count ? styleSamples[index] : "" },
+                                        set: { newValue in
+                                            guard index < styleSamples.count else { return }
+                                            styleSamples[index] = newValue
+                                        }
+                                    ), onCommit: { persistStyleSamples() })
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.caption)
+
+                                    Button {
+                                        guard index < styleSamples.count else { return }
+                                        styleSamples.remove(at: index)
+                                        persistStyleSamples()
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help("Remove this sample")
                                 }
                             }
                         }
-                        .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Color(nsColor: .textBackgroundColor))
-                        )
+                    }
 
-                        HStack {
-                            Text("\(styleSamples.count) learned")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer(minLength: 0)
-                            Button("Refresh") { refreshStyleMemory() }
-                            Button("Clear", role: .destructive) {
-                                StyleCorpusStore.shared.clear()
-                                // Give the async wipe a beat, then reflect it.
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                    refreshStyleMemory()
-                                }
+                    HStack {
+                        Button {
+                            styleSamples.append("")
+                            persistStyleSamples()
+                        } label: {
+                            Label("Add sample", systemImage: "plus")
+                        }
+                        Spacer(minLength: 0)
+                        Text("\(styleSamples.count) saved")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Refresh") { refreshStyleMemory() }
+                        Button("Clear all", role: .destructive) {
+                            StyleCorpusStore.shared.clear()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                refreshStyleMemory()
                             }
                         }
                     }
@@ -110,6 +132,10 @@ struct ContextPaneView: View {
     private func refreshStyleMemory() {
         styleLearningEnabled = StyleCorpusStore.shared.isEnabled
         styleSamples = StyleCorpusStore.shared.currentSamples()
+    }
+
+    private func persistStyleSamples() {
+        StyleCorpusStore.shared.setSamples(styleSamples)
     }
 
     // MARK: - Live preview

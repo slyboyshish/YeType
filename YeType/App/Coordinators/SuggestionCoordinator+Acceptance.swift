@@ -507,6 +507,10 @@ extension SuggestionCoordinator {
 
         totalTabAcceptedWordCount += acceptedWordCount
         userDefaults.set(totalTabAcceptedWordCount, forKey: Self.totalTabAcceptedWordCountDefaultsKey)
+
+        // Text accepted with Tab is text the user put in their own document — learn it as their voice
+        // too, alongside what they hand-type. No-op unless style learning is enabled.
+        StyleCorpusStore.shared.recordAccepted(acceptedChunk)
     }
 
     // MARK: - Caret Prediction
