@@ -72,7 +72,7 @@ struct ContextPaneView: View {
 
                     if styleSamples.isEmpty {
                         Text("Nothing learned yet — keep typing (or press Tab to accept suggestions) " +
-                            "and samples will appear here. You can also add your own with the button below.")
+                            "and samples will appear here, where you can edit or delete them.")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     } else {
@@ -105,16 +105,10 @@ struct ContextPaneView: View {
                     }
 
                     HStack {
-                        Button {
-                            styleSamples.append("")
-                            persistStyleSamples()
-                        } label: {
-                            Label("Add sample", systemImage: "plus")
-                        }
-                        Spacer(minLength: 0)
                         Text("\(styleSamples.count) saved")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
                         Button("Refresh") { refreshStyleMemory() }
                         Button("Clear all", role: .destructive) {
                             StyleCorpusStore.shared.clear()
