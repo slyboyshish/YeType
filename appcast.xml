@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>YeType</title>
+    <item>
+      <title>1.0</title>
+      <sparkle:version>10</sparkle:version>
+      <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
+      <pubDate>Fri, 12 Jun 2026 12:40:49 +0100</pubDate>
+      <enclosure url="https://github.com/slyboyshish/YeType/releases/download/v1.0/YeType-1.0.dmg" sparkle:edSignature="zZtVBIsDPY4k8HfPxJEjaaZlCbM+e8RYDTG408JscpMURqDnim+1flADWgaVTr+oVycaAcAndHDimEI8RubVBQ==" length="16398170" type="application/octet-stream"/>
+    </item>
+  </channel>
+</rss>
