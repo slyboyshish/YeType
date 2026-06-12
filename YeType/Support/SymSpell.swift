@@ -55,16 +55,14 @@ nonisolated final class SymSpell {
     private var deletes: [Int: [Int32]] = [:]
     private var maxDictionaryWordLength = 0
 
-    /// prefix (lowercase) -> index of the highest-frequency dictionary word that starts with it and
-    /// is strictly longer. This powers mid-word autocomplete ("прив" -> "привет") and doubles as the
-    /// "is this a valid prefix of a real word" test the typo gate needs for languages `NSSpellChecker`
-    /// can't judge (so a correct-so-far Russian word gets a gray completion, not a green correction).
-    /// Built incrementally during `createDictionaryEntry`, before the index is published immutable.
-    private var prefixBest: [String: Int32] = [:]
-    /// Don't complete from a 1-letter stub (too ambiguous) and cap indexed prefix length so the map
-    /// stays bounded. A query longer than this simply returns no completion.
+    /// Word indices sorted lexicographically by their (lowercase) word, built once after load. Mid-word
+    /// autocomplete ("прив" -> "привет") and the "is this a valid prefix" test both binary-search this
+    /// for the prefix range, then scan it for the most frequent longer word. Storing a sorted array of
+    /// indices (shared string buffers) costs ~1 MB; the per-prefix map this replaced cost ~200 MB
+    /// because every prefix of every word was a separate heap key (Cyrillic spills past inline strings).
+    private var sortedIndices: [Int32]?
+    /// Don't complete from a 1-letter stub (too ambiguous).
     private let completionMinPrefix = 2
-    private let completionMaxPrefix = 12
 
     init(maxDictionaryEditDistance: Int = 2, prefixLength: Int = 7) {
         self.maxDictionaryEditDistance = maxDictionaryEditDistance
@@ -83,13 +81,55 @@ nonisolated final class SymSpell {
 
     /// The most frequent dictionary word that has `prefix` as a strict prefix (and is longer), or nil
     /// when there is none. Case-insensitive; the returned word is the dictionary's lowercase form, so
-    /// callers take only the tail past `prefix` for the gray completion.
+    /// callers take only the tail past `prefix` for the gray completion. Binary-searches the sorted
+    /// index for the contiguous prefix range, then scans it for the highest-frequency longer word.
     func bestCompletion(forPrefix prefix: String) -> String? {
         let lowered = prefix.lowercased()
-        guard lowered.count >= completionMinPrefix, lowered.count <= completionMaxPrefix else { return nil }
-        guard let index = prefixBest[lowered] else { return nil }
-        let word = wordsList[Int(index)]
-        return word.count > lowered.count ? word : nil
+        guard lowered.count >= completionMinPrefix else { return nil }
+        let indices = ensureSortedIndices()
+        guard !indices.isEmpty else { return nil }
+
+        var best: String?
+        var bestCount: Int64 = -1
+        var cursor = lowerBound(of: lowered, in: indices)
+        while cursor < indices.count {
+            let word = wordsList[Int(indices[cursor])]
+            guard word.hasPrefix(lowered) else { break }   // left the prefix range
+            if word.count > lowered.count, let count = words[word], count > bestCount {
+                best = word
+                bestCount = count
+            }
+            cursor += 1
+        }
+        return best
+    }
+
+    /// Index of the first sorted entry whose word is >= `prefix` (standard lower-bound binary search).
+    private func lowerBound(of prefix: String, in indices: [Int32]) -> Int {
+        var low = 0
+        var high = indices.count
+        while low < high {
+            let mid = (low + high) / 2
+            if wordsList[Int(indices[mid])] < prefix {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        return low
+    }
+
+    /// Lazily builds the lexicographically sorted index over `wordsList`. Called at the end of
+    /// `loadDictionary` (single-threaded) in production; the lazy guard only covers direct
+    /// `createDictionaryEntry` use in tests.
+    @discardableResult
+    private func ensureSortedIndices() -> [Int32] {
+        if let sortedIndices { return sortedIndices }
+        let built = (0..<wordsList.count)
+            .map { Int32($0) }
+            .sorted { wordsList[Int($0)] < wordsList[Int($1)] }
+        sortedIndices = built
+        return built
     }
 
     // MARK: - Dictionary loading
@@ -102,6 +142,9 @@ nonisolated final class SymSpell {
             guard parts.count >= 2, let count = Int64(parts[1]) else { continue }
             createDictionaryEntry(key: String(parts[0]), count: count)
         }
+        // Build the completion index once, after every entry is in, while still single-threaded.
+        sortedIndices = nil
+        ensureSortedIndices()
     }
 
     func createDictionaryEntry(key: String, count: Int64) {
@@ -115,25 +158,9 @@ nonisolated final class SymSpell {
         for delete in editsPrefix(chars) {
             deletes[Self.hash(delete), default: []].append(index)
         }
-        indexCompletionPrefixes(chars: chars, index: index, count: count)
-    }
-
-    /// Records this word as the best completion for each of its prefixes when it is more frequent than
-    /// whatever was recorded before. Prefixes shorter than the word only (length < word length) so a
-    /// completion always adds at least one character.
-    private func indexCompletionPrefixes(chars: [Character], index: Int32, count: Int64) {
-        let maxLength = min(chars.count - 1, completionMaxPrefix)
-        guard maxLength >= completionMinPrefix else { return }
-        for length in completionMinPrefix...maxLength {
-            let prefix = String(chars[0..<length])
-            if let existing = prefixBest[prefix] {
-                if (words[wordsList[Int(existing)]] ?? 0) < count {
-                    prefixBest[prefix] = index
-                }
-            } else {
-                prefixBest[prefix] = index
-            }
-        }
+        // Adding a word invalidates the sorted completion index; it is rebuilt lazily on next query
+        // (or eagerly at the end of `loadDictionary`).
+        sortedIndices = nil
     }
 
     /// All delete-variants of a word's prefix (capped at `prefixLength`) down to
