@@ -11,7 +11,7 @@ extension SuggestionCoordinator {
     /// Minimum keyboard-idle time before the LLM may run (the typing-burst gate threshold). Slightly
     /// above a fast typist's inter-key interval (~120-250ms) so mid-burst keystrokes defer the model,
     /// while a natural end-of-word pause still gets a phrase continuation promptly.
-    static let modelIdleDelaySeconds: TimeInterval = 0.35
+    static let modelIdleDelaySeconds: TimeInterval = 0.25
 
     /// Instant dictionary suggestion straight off the keystroke, without waiting for the host to
     /// publish the new text to AX. Qt (Telegram) publishes hundreds of milliseconds late, which the
@@ -121,7 +121,14 @@ extension SuggestionCoordinator {
         // disabled our event taps and suggestions died until restart. Defer the model to the next
         // pause instead; the dictionary paths above already gave instant feedback for this keystroke.
         let sinceKeystroke = Date().timeIntervalSince(lastKeystrokeAt)
-        if sinceKeystroke < Self.modelIdleDelaySeconds {
+        // A word boundary (space/punctuation just typed) is the natural moment the user wants the
+        // phrase continued — fire the model immediately instead of waiting out the idle window.
+        // Mid-word keystrokes still defer: the dictionary tier already covers the current word and
+        // mid-word decodes would be stale by the next letter anyway.
+        let endsAtWordBoundary = rawContext.precedingText.last.map {
+            $0 == " " || "\n.,!?…:;".contains($0)
+        } ?? false
+        if !endsAtWordBoundary, sinceKeystroke < Self.modelIdleDelaySeconds {
             state = .debouncing
             let remainingMilliseconds = Int((Self.modelIdleDelaySeconds - sinceKeystroke) * 1000) + 10
             let deferredWorkID = workController.replaceDebouncedWork(
