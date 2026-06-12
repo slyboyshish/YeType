@@ -55,6 +55,17 @@ nonisolated final class SymSpell {
     private var deletes: [Int: [Int32]] = [:]
     private var maxDictionaryWordLength = 0
 
+    /// prefix (lowercase) -> index of the highest-frequency dictionary word that starts with it and
+    /// is strictly longer. This powers mid-word autocomplete ("прив" -> "привет") and doubles as the
+    /// "is this a valid prefix of a real word" test the typo gate needs for languages `NSSpellChecker`
+    /// can't judge (so a correct-so-far Russian word gets a gray completion, not a green correction).
+    /// Built incrementally during `createDictionaryEntry`, before the index is published immutable.
+    private var prefixBest: [String: Int32] = [:]
+    /// Don't complete from a 1-letter stub (too ambiguous) and cap indexed prefix length so the map
+    /// stays bounded. A query longer than this simply returns no completion.
+    private let completionMinPrefix = 2
+    private let completionMaxPrefix = 12
+
     init(maxDictionaryEditDistance: Int = 2, prefixLength: Int = 7) {
         self.maxDictionaryEditDistance = maxDictionaryEditDistance
         self.prefixLength = prefixLength
@@ -62,6 +73,24 @@ nonisolated final class SymSpell {
 
     var isEmpty: Bool { wordsList.isEmpty }
     var wordCount: Int { wordsList.count }
+
+    /// Dictionary membership test (case-insensitive). Used to tell a complete correct word from an
+    /// unfinished one, so the gate doesn't try to "complete" or "correct" a word the user already
+    /// finished typing correctly.
+    func contains(_ word: String) -> Bool {
+        words[word.lowercased()] != nil
+    }
+
+    /// The most frequent dictionary word that has `prefix` as a strict prefix (and is longer), or nil
+    /// when there is none. Case-insensitive; the returned word is the dictionary's lowercase form, so
+    /// callers take only the tail past `prefix` for the gray completion.
+    func bestCompletion(forPrefix prefix: String) -> String? {
+        let lowered = prefix.lowercased()
+        guard lowered.count >= completionMinPrefix, lowered.count <= completionMaxPrefix else { return nil }
+        guard let index = prefixBest[lowered] else { return nil }
+        let word = wordsList[Int(index)]
+        return word.count > lowered.count ? word : nil
+    }
 
     // MARK: - Dictionary loading
 
@@ -85,6 +114,25 @@ nonisolated final class SymSpell {
         if chars.count > maxDictionaryWordLength { maxDictionaryWordLength = chars.count }
         for delete in editsPrefix(chars) {
             deletes[Self.hash(delete), default: []].append(index)
+        }
+        indexCompletionPrefixes(chars: chars, index: index, count: count)
+    }
+
+    /// Records this word as the best completion for each of its prefixes when it is more frequent than
+    /// whatever was recorded before. Prefixes shorter than the word only (length < word length) so a
+    /// completion always adds at least one character.
+    private func indexCompletionPrefixes(chars: [Character], index: Int32, count: Int64) {
+        let maxLength = min(chars.count - 1, completionMaxPrefix)
+        guard maxLength >= completionMinPrefix else { return }
+        for length in completionMinPrefix...maxLength {
+            let prefix = String(chars[0..<length])
+            if let existing = prefixBest[prefix] {
+                if (words[wordsList[Int(existing)]] ?? 0) < count {
+                    prefixBest[prefix] = index
+                }
+            } else {
+                prefixBest[prefix] = index
+            }
         }
     }
 

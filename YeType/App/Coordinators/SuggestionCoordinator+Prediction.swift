@@ -67,6 +67,15 @@ extension SuggestionCoordinator {
             return
         }
 
+        // Mid-word handler: while the caret sits inside an unfinished word, the small local model is
+        // unreliable (especially in Russian — it emits gibberish or empty), so the current word is
+        // driven by the frequency dictionary instead: complete a valid prefix in gray, replace a clear
+        // misspelling in green, or stay silent rather than append a non-word. The model is used only
+        // to continue the phrase AFTER a finished word.
+        if await handleCurrentWordCompletion(rawContext: rawContext, workID: workID) {
+            return
+        }
+
         let context = interactionState.materializeContext(from: rawContext)
         // Screen Recording is optional. Re-check it live so a cached excerpt captured before the user
         // revoked the permission can never be injected during the 2s permission-poll window.
@@ -158,6 +167,10 @@ extension SuggestionCoordinator {
                 // flashing a green correction. Only genuine misspellings (no valid completion) get
                 // corrected. This is the user's rule: correct-so-far → gray completion; wrong → green.
                 if spellChecker.hasValidCompletions(for: word) { return false }
+                // Same idea for languages the OS lacks (Russian): if our frequency dictionary can
+                // complete this prefix into a real word, the user is mid-typing a correct word, not
+                // making an error — defer to the gray completion instead of flashing a green fix.
+                if symSpellHasCompletion(for: word, precedingText: rawContext.precedingText) { return false }
                 // NSSpellChecker handles whatever languages the OS has (usually English). It lacks
                 // Russian etc., so a Cyrillic typo slips through as "not misspelled"; fall back to our
                 // bundled SymSpell dictionaries with a strict (edit-distance 1) test.
@@ -240,6 +253,105 @@ extension SuggestionCoordinator {
             return false
         }
         return symSpellCorrector.looksLikeTypo(for: word, language: language)
+    }
+
+    /// Whether the frequency dictionary can complete `word` into a longer real word — i.e. it is a
+    /// valid prefix the user is still typing, not an error. The Cyrillic counterpart to
+    /// `NSSpellChecker.hasValidCompletions`, used so a correct-so-far Russian word is completed in gray
+    /// rather than flagged for a green correction.
+    private func symSpellHasCompletion(for word: String, precedingText: String) -> Bool {
+        let enabledLanguages = SpellingDictionaryCatalog.languages(
+            for: settingsSnapshot.enabledSpellingDictionaryCodes
+        )
+        guard let language = spellingLanguageResolver.resolve(
+            precedingText: precedingText,
+            currentWord: word,
+            enabledLanguages: enabledLanguages
+        ) else {
+            return false
+        }
+        return symSpellCorrector.bestCompletion(for: word, language: language) != nil
+    }
+
+    /// Handles the word under the caret with the frequency dictionary instead of the model. Returns
+    /// `true` when it took over the cycle (completed, corrected, or deliberately stayed silent), or
+    /// `false` to let the normal model continuation run (no unfinished word, or no confident language).
+    ///
+    /// Rules, matching the user's mental model: a valid prefix → gray completion of the missing tail;
+    /// a finished correct word → defer to the model for the next word; a clear misspelling → green
+    /// replace; anything else (a garbled stub the dictionary can't rescue) → show nothing, because the
+    /// model would only invent a non-word here.
+    private func handleCurrentWordCompletion(rawContext: FocusedInputSnapshot, workID: UInt64) async -> Bool {
+        guard settingsSnapshot.suppressCompletionsOnTypo else { return false }
+        // Only act while genuinely inside an unfinished word: a trailing space means the word is
+        // committed, which is the model's job (next-word continuation).
+        guard let trailing = CurrentWordExtractor.extractTrailingWord(from: rawContext.precedingText),
+              trailing.trailingSpaceCount == 0 else {
+            return false
+        }
+        let partial = trailing.result.word
+        guard partial.count >= 2 else { return false }
+
+        let enabledLanguages = SpellingDictionaryCatalog.languages(
+            for: settingsSnapshot.enabledSpellingDictionaryCodes
+        )
+        // Without a confident language (and therefore a loaded dictionary) we cannot judge the word;
+        // fall back to the model rather than suppress something we don't understand.
+        guard let language = spellingLanguageResolver.resolve(
+            precedingText: rawContext.precedingText,
+            currentWord: partial,
+            enabledLanguages: enabledLanguages
+        ) else {
+            YeTypeLogger.suggestion.notice("MIDWORD word=\(partial) lang=nil → fall through to model")
+            return false
+        }
+        let completionPreview = symSpellCorrector.bestCompletion(for: partial, language: language) ?? "<nil>"
+        YeTypeLogger.suggestion.notice("MIDWORD word=\(partial) lang=\(language.rawValue) completion=\(completionPreview) contains=\(symSpellCorrector.contains(partial, language: language))")
+
+        // 1. Valid prefix → gray completion of the missing tail.
+        if let full = symSpellCorrector.bestCompletion(for: partial, language: language) {
+            let fullChars = Array(full)
+            if fullChars.count > partial.count {
+                let suffix = String(fullChars[partial.count...])
+                presentCompletion(
+                    suffix: suffix,
+                    fullWord: full,
+                    rawContext: rawContext,
+                    workID: workID
+                )
+                return true
+            }
+        }
+
+        // 2. Already a complete correct word → let the model continue the phrase.
+        if symSpellCorrector.contains(partial, language: language) {
+            return false
+        }
+
+        // 3. Not a prefix and not a word → a misspelling. Offer a replace if the dictionary has a close
+        //    fix (handles errors the strict typo gate skipped, e.g. edit distance 2 or short words).
+        if let corrected = bestCorrection(for: partial, precedingText: rawContext.precedingText),
+           corrected.lowercased() != partial.lowercased() {
+            presentCorrection(
+                typoWord: partial,
+                correctedWord: corrected,
+                rawContext: rawContext,
+                workID: workID
+            )
+            return true
+        }
+
+        // 4. Garbled stub the dictionary can't rescue → stay silent. The model would only append a
+        //    non-word after the broken stem, which is exactly the "garbage suggestion" complaint.
+        clearSuggestion()
+        hideOverlay(reason: "Overlay hidden because the unfinished word has no dictionary completion or correction.")
+        state = .idle
+        logStage(
+            "midword-no-candidate",
+            workID: workID,
+            message: "No completion or correction for unfinished word \"\(partial)\"; suppressed model continuation."
+        )
+        return true
     }
 
     /// Replaces a completed typo after Space without creating a visible correction session.
@@ -343,6 +455,43 @@ extension SuggestionCoordinator {
             generation: liveContext.generation,
             message: "Offered a native spell-checker correction for the current word.",
             normalizedOutput: correctedWord
+        )
+    }
+
+    /// Presents a dictionary mid-word completion as a normal gray continuation: `suffix` is the tail
+    /// that finishes the current word (e.g. "ет" for "прив" → "привет"). Mirrors `presentCorrection`
+    /// (which works reliably) by anchoring the session to the SAME `rawContext` that produced it,
+    /// rather than re-materializing a fresh snapshot inside `apply` — the latter races the host's AX
+    /// update on an instant (zero-latency) suggestion and gets invalidated as an anchor mismatch.
+    private func presentCompletion(
+        suffix: String,
+        fullWord: String,
+        rawContext: FocusedInputSnapshot,
+        workID: UInt64
+    ) {
+        let liveContext = interactionState.materializeContext(from: rawContext)
+        latestGenerationNumber = liveContext.generation
+        latestLatencyMilliseconds = 0
+        latestPromptPreview = "dictionary completion: \(fullWord)"
+        let session = interactionState.startSession(
+            fullText: suffix,
+            liveContext: liveContext,
+            latency: 0
+        )
+        applySessionDiagnostics(session, acceptanceAction: "Completed the current word to \"\(fullWord)\".")
+        state = .ready(text: session.remainingText, latency: 0)
+        presentOverlay(
+            text: session.remainingText,
+            at: liveContext.caretRect,
+            context: liveContext,
+            isRightToLeft: TextDirectionDetector.isRightToLeft(liveContext.precedingText)
+        )
+        logStage(
+            "dictionary-completion-ready",
+            workID: workID,
+            generation: liveContext.generation,
+            message: "Offered a dictionary completion for the unfinished word.",
+            normalizedOutput: fullWord
         )
     }
 

@@ -68,6 +68,24 @@ nonisolated final class SymSpellCorrector: @unchecked Sendable {
         return TypoCaseTransfer.applying(caseOf: word, to: suggestion.term)
     }
 
+    /// The best mid-word completion for `prefix` (e.g. "прив" -> "привет"), or nil when the index is
+    /// not ready or `prefix` is not the start of any frequent word. Drives the gray completion the user
+    /// expects while typing a correct-so-far word, and tells the gate this prefix is valid (not a typo).
+    func bestCompletion(
+        for prefix: String,
+        language: SpellingDictionaryLanguage = .english
+    ) -> String? {
+        guard let symSpell = cachedIndexOrRequestLoad(for: language) else { return nil }
+        return symSpell.bestCompletion(forPrefix: prefix)
+    }
+
+    /// Whether `word` is a complete word in the language's dictionary. Lets the gate distinguish a
+    /// finished correct word from an unfinished one or a misspelling.
+    func contains(_ word: String, language: SpellingDictionaryLanguage = .english) -> Bool {
+        guard let symSpell = cachedIndexOrRequestLoad(for: language) else { return false }
+        return symSpell.contains(word)
+    }
+
     /// Conservative "is this a real typo" test for languages the OS spell checker can't judge
     /// (e.g. Russian). A bare frequency dictionary cannot distinguish a misspelling from a valid but
     /// rare/inflected word, so flagging anything merely absent from the top-N list constantly
