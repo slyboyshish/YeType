@@ -6,8 +6,8 @@
       <title>1.0</title>
       <sparkle:version>10</sparkle:version>
       <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
-      <pubDate>Fri, 12 Jun 2026 12:40:49 +0100</pubDate>
-      <enclosure url="https://github.com/slyboyshish/YeType/releases/download/v1.0/YeType-1.0.dmg" sparkle:edSignature="zZtVBIsDPY4k8HfPxJEjaaZlCbM+e8RYDTG408JscpMURqDnim+1flADWgaVTr+oVycaAcAndHDimEI8RubVBQ==" length="16398170" type="application/octet-stream"/>
+      <pubDate>Fri, 12 Jun 2026 12:51:45 +0100</pubDate>
+      <enclosure url="https://github.com/slyboyshish/YeType/releases/download/v1.0/YeType-1.0.dmg" sparkle:edSignature="ufIaPxArwWKFJolaqby9dZLUQRI4FhTuN/KMTB9/segto2YH/yUw7DMUA3O2dPIaJ8bE57tDpiElyYHi8XcACg==" length="16397010" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
