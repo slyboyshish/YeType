@@ -210,8 +210,51 @@ final class FocusTracker {
         return snapshotChanged || capture.didChangeFocusedInput
     }
 
-    /// Captures the current frontmost application's focused element and reduces it into a snapshot.
+    /// The last fully Supported capture and when it happened, for the transient-dropout bridge.
+    private var lastSupportedCapture: (result: FocusCaptureResult, at: ContinuousClock.Instant)?
+
+    /// How long a sudden Unsupported reading may be bridged with the previous Supported snapshot.
+    /// Qt (Telegram) and some Electron fields transiently report "no focused element" / "missing
+    /// text value" for a few polls while they repaint mid-typing, even though the user never left
+    /// the composer. Propagating those single-poll dropouts tears the suggestion down on every
+    /// keystroke ("appears briefly, then vanishes"). Genuine focus loss persists past the window
+    /// and propagates ~0.4s later, which is imperceptible for hiding ghost text.
+    private static let unsupportedBridgeWindow: Duration = .milliseconds(400)
+
+    /// Source-level bridge over transient Unsupported dropouts. Done HERE (not in the event-handler
+    /// gate) because several consumers read `snapshot` directly — input handling, generation, and
+    /// the snapshot-change handler — and gating only one of them leaves the others seeing the
+    /// dropout, which is exactly how the previous event-level attempt broke Telegram entirely.
+    /// Blocked states (selection, secure field, disabled app) are meaningful and never bridged.
     private func captureSnapshot() -> FocusCaptureResult {
+        let fresh = captureSnapshotRaw()
+        switch fresh.snapshot.capability {
+        case .supported:
+            lastSupportedCapture = (fresh, .now)
+            return fresh
+        case .unsupported:
+            guard let last = lastSupportedCapture,
+                  ContinuousClock.now - last.at < Self.unsupportedBridgeWindow,
+                  fresh.snapshot.bundleIdentifier == nil
+                      || fresh.snapshot.bundleIdentifier == last.result.snapshot.bundleIdentifier
+            else {
+                lastSupportedCapture = nil
+                return fresh
+            }
+            return FocusCaptureResult(
+                snapshot: last.result.snapshot,
+                didChangeFocusedInput: false
+            )
+        case .blocked:
+            return fresh
+        }
+    }
+
+    /// Captures the current frontmost application's focused element and reduces it into a snapshot.
+    ///
+    /// Wrapped by `captureSnapshot()` below, which bridges sub-400ms Unsupported dropouts; this raw
+    /// variant reports exactly what AX says right now.
+    private func captureSnapshotRaw() -> FocusCaptureResult {
         guard permissionProvider() else {
             return inactiveCapture(
                 applicationName: "Accessibility permission missing",
