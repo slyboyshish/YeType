@@ -180,13 +180,15 @@ final class YeTypeAppEnvironment {
         let enabledSpellingLanguages = SpellingDictionaryCatalog.languages(
             for: suggestionSettings.enabledSpellingDictionaryCodes
         )
-        // Preserve the existing warm English path when it is enabled. A sole non-English choice is
-        // also preloaded; broader multilingual sets stay lazy so app launch never builds every index.
-        let preloadSpellingLanguage = enabledSpellingLanguages.count == 1
-            ? enabledSpellingLanguages.first
-            : enabledSpellingLanguages.first(where: { $0 == .english })
+        // Warm every enabled dictionary at launch (bounded by the cache) so mid-word completion and
+        // correction are ready immediately in each language. English first so its existing fast path
+        // is unchanged; the rest follow. This fixes Russian suggestions silently not appearing for the
+        // first seconds after launch because its index had not finished building yet.
+        let preloadSpellingLanguages = enabledSpellingLanguages.contains(.english)
+            ? [.english] + enabledSpellingLanguages.filter { $0 != .english }
+            : enabledSpellingLanguages
         let symSpellCorrector = SymSpellCorrector(
-            preloadLanguage: preloadSpellingLanguage
+            preloadLanguages: preloadSpellingLanguages
         )
         let suggestionCoordinator = SuggestionCoordinator(
             permissionManager: permissionManager,

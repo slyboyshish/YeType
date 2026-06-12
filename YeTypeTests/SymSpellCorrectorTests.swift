@@ -3,7 +3,7 @@ import XCTest
 
 final class SymSpellCorrectorTests: XCTestCase {
     private func makeLoadedCorrector() -> SymSpellCorrector {
-        let corrector = SymSpellCorrector(preloadLanguage: nil)
+        let corrector = SymSpellCorrector(preloadLanguages: [])
         corrector.loadForTesting(contents: """
         the 1000000
         name 50000
@@ -15,7 +15,7 @@ final class SymSpellCorrectorTests: XCTestCase {
 
     func test_returnsNilBeforeIndexIsReady() {
         // autoload off and never loaded: callers must fall back gracefully.
-        let corrector = SymSpellCorrector(preloadLanguage: nil)
+        let corrector = SymSpellCorrector(preloadLanguages: [])
         XCTAssertNil(corrector.bestCorrection(for: "teh"))
     }
 
@@ -38,7 +38,7 @@ final class SymSpellCorrectorTests: XCTestCase {
     }
 
     func test_keepsLanguageIndexesSeparate() {
-        let corrector = SymSpellCorrector(preloadLanguage: nil)
+        let corrector = SymSpellCorrector(preloadLanguages: [])
         corrector.loadForTesting(
             contents: """
             gift 1000
@@ -62,7 +62,7 @@ final class SymSpellCorrectorTests: XCTestCase {
     }
 
     func test_evictsLeastRecentlyUsedLanguageAtCacheLimit() {
-        let corrector = SymSpellCorrector(cacheLimit: 2, preloadLanguage: nil)
+        let corrector = SymSpellCorrector(cacheLimit: 2, preloadLanguages: [])
         corrector.loadForTesting(contents: "the 1000", language: .english)
         corrector.loadForTesting(contents: "das 1000", language: .german)
 

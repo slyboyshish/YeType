@@ -29,13 +29,16 @@ nonisolated final class SymSpellCorrector: @unchecked Sendable {
     private var loadingLanguages = Set<SpellingDictionaryLanguage>()
     private var accessSequence: UInt64 = 0
 
-    /// `preloadLanguage` preserves the existing fast English startup by default. Production may
-    /// pass another sole-enabled language, or nil when the user disabled every bundled dictionary.
+    /// `preloadLanguages` warms every enabled dictionary at launch so mid-word completion and
+    /// correction are ready immediately — without this, the Russian index only built on the first
+    /// Russian word typed and was missing for the first seconds (or longer under load), so Russian
+    /// suggestions silently didn't appear right after launch. The cache bound still applies, so only
+    /// the most-recently-used `cacheLimit` indexes stay resident.
     init(
         maxEditDistance: Int = 2,
         prefixLength: Int = 7,
         cacheLimit: Int = 2,
-        preloadLanguage: SpellingDictionaryLanguage? = .english,
+        preloadLanguages: [SpellingDictionaryLanguage] = [.english],
         resourceLoader: ResourceLoader? = nil
     ) {
         self.maxEditDistance = maxEditDistance
@@ -43,8 +46,8 @@ nonisolated final class SymSpellCorrector: @unchecked Sendable {
         self.cacheLimit = max(1, cacheLimit)
         self.resourceLoader = resourceLoader ?? Self.bundledContents(for:)
 
-        if let preloadLanguage {
-            requestLoad(for: preloadLanguage)
+        for language in preloadLanguages.prefix(self.cacheLimit) {
+            requestLoad(for: language)
         }
     }
 
