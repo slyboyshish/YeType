@@ -28,10 +28,24 @@ final class StyleCorpusStore {
     /// Throttle: only capture at most once per this interval so fast typing doesn't thrash the file.
     private static let captureIntervalSeconds: TimeInterval = 8
 
+    /// Largest single-poll text growth still treated as live typing. A bigger jump means focus change,
+    /// paste, or navigation into pre-existing text — never recorded, so we never learn text the user
+    /// did not type this session (their own Claude messages, a note's existing body, OCR'd screen text).
+    private static let maxTypingDeltaChars = 24
+    /// Cap the running typed buffer so a long uninterrupted session can't grow unbounded before a
+    /// sentence terminator flushes it.
+    private static let maxTypedBufferChars = 600
+
     private let queue = DispatchQueue(label: "com.yetype.style-corpus")
     private let fileURL: URL?
     private var samples: [String]
     private var lastCaptureAt: Date?
+    /// The previous `precedingText` we saw, to diff against. Only the newly-appended suffix counts as
+    /// "typed". Reset (no capture) whenever the change is too large to be a keystroke.
+    private var lastSeenText: String?
+    /// Accumulates only the characters the user actually typed, across polls, until a sentence
+    /// terminator flushes the completed sentence into `samples`.
+    private var typedBuffer: String = ""
 
     private init() {
         fileURL = Self.makeFileURL()
@@ -60,30 +74,99 @@ final class StyleCorpusStore {
             guard let self else { return }
             self.samples.removeAll()
             self.lastCaptureAt = nil
+            self.lastSeenText = nil
+            self.typedBuffer = ""
             Self.save(self.samples, to: self.fileURL)
         }
     }
 
-    /// Records a candidate sample drawn from the user's surrounding text. No-op when the feature is
-    /// off or when called again inside the throttle window. The newest complete sentence in `text`
-    /// is preferred; we never store the in-progress trailing fragment.
+    /// Feeds the latest `precedingText` (the text before the caret in the focused field) so the store
+    /// can learn ONLY what the user actively types. It diffs against the previous value and keeps just
+    /// the freshly-appended characters; large jumps (focus change, paste, scrolling into existing or
+    /// on-screen text) reset the baseline and capture nothing. Completed sentences in the typed buffer
+    /// are committed as samples. No-op when disabled.
     func record(_ text: String) {
         guard isEnabled else { return }
         queue.async { [weak self] in
             guard let self else { return }
-            let now = Date()
-            if let last = self.lastCaptureAt, now.timeIntervalSince(last) < Self.captureIntervalSeconds {
+            defer { self.lastSeenText = text }
+
+            guard let previous = self.lastSeenText else {
+                // First sight of this field: treat as baseline. Never record pre-existing text.
                 return
             }
-            guard let sample = Self.extractSample(from: text) else { return }
-            guard !self.samples.contains(sample) else { return }
-            self.lastCaptureAt = now
-            self.samples.append(sample)
-            if self.samples.count > Self.maxSamples {
-                self.samples.removeFirst(self.samples.count - Self.maxSamples)
+            if text == previous { return }
+
+            let appended = Self.appendedSuffix(previous: previous, current: text)
+            let removedCount = previous.count - Self.commonPrefixCount(previous, text)
+
+            // Only incremental typing qualifies: a small append with little/no deletion. Anything
+            // larger is a focus switch, paste, or navigation — drop it and rebaseline so its content
+            // never enters the corpus.
+            guard !appended.isEmpty,
+                  appended.count <= Self.maxTypingDeltaChars,
+                  removedCount <= 2 else {
+                self.typedBuffer = ""
+                return
             }
-            Self.save(self.samples, to: self.fileURL)
+
+            self.typedBuffer += appended
+            if self.typedBuffer.count > Self.maxTypedBufferChars {
+                self.typedBuffer = String(self.typedBuffer.suffix(Self.maxTypedBufferChars))
+            }
+
+            // Flush every completed sentence in the buffer; keep the trailing in-progress fragment.
+            self.flushCompletedSentences()
         }
+    }
+
+    /// Extracts completed sentences (terminated by . ! ?) from `typedBuffer`, records the ones that
+    /// fit the length window, and leaves the trailing unfinished fragment in the buffer.
+    private func flushCompletedSentences() {
+        var fragment = ""
+        var leftover = ""
+        var sawTerminator = false
+        for char in typedBuffer {
+            if sawTerminator && !(char == "." || char == "!" || char == "?") {
+                leftover.append(char)
+                continue
+            }
+            fragment.append(char)
+            if char == "." || char == "!" || char == "?" {
+                let sentence = fragment.trimmingCharacters(in: .whitespacesAndNewlines)
+                let count = sentence.count
+                if count >= Self.minSampleChars && count <= Self.maxSampleChars, !samples.contains(sentence) {
+                    samples.append(sentence)
+                    if samples.count > Self.maxSamples {
+                        samples.removeFirst(samples.count - Self.maxSamples)
+                    }
+                    Self.save(samples, to: fileURL)
+                }
+                fragment = ""
+                sawTerminator = true
+            }
+        }
+        // Whatever follows the last terminator (or the whole thing if no terminator) stays buffered.
+        typedBuffer = leftover.isEmpty ? fragment : leftover
+    }
+
+    /// Characters of `current` that come after its common prefix with `previous` — i.e. the freshly
+    /// appended text since last poll.
+    static func appendedSuffix(previous: String, current: String) -> String {
+        let common = commonPrefixCount(previous, current)
+        let currentChars = Array(current)
+        guard common <= currentChars.count else { return "" }
+        return String(currentChars[common...])
+    }
+
+    static func commonPrefixCount(_ a: String, _ b: String) -> Int {
+        let aChars = Array(a)
+        let bChars = Array(b)
+        var i = 0
+        while i < aChars.count && i < bChars.count && aChars[i] == bChars[i] {
+            i += 1
+        }
+        return i
     }
 
     /// A compact few-shot block for the prompt, or nil when disabled / empty. Framed as examples of
