@@ -189,11 +189,12 @@ struct SuggestionSettingsStore {
         // Hiding a completion on a misspelled current word and offering a fix remain the default
         // behavior. Automatic replacement is deliberately opt-in because it mutates host-app text
         // without a confirmation key.
-        // Default OFF: this is a speed-typing tool, so the gray continuation must keep flowing while
-        // you type mid-word. Suppressing it on every in-progress (and therefore "misspelled") word
-        // killed the core value. Typo corrections are still offered alongside (offerTypoCorrections).
+        // Default ON, but the gate now distinguishes an in-progress correctly-spelled word (a valid
+        // prefix of a real word — gray completion keeps flowing) from a genuine misspelling (green
+        // correction). So a correct word still gets its continuation; only real errors swap to a
+        // correction. See `isValidWordPrefix` in the suggestion coordinator.
         let resolvedSuppressCompletionsOnTypo =
-            userDefaults.object(forKey: Self.suppressCompletionsOnTypoDefaultsKey) as? Bool ?? false
+            userDefaults.object(forKey: Self.suppressCompletionsOnTypoDefaultsKey) as? Bool ?? true
         let resolvedOfferTypoCorrections =
             userDefaults.object(forKey: Self.offerTypoCorrectionsDefaultsKey) as? Bool ?? true
         let resolvedEnabledSpellingDictionaryCodes: [String] = {

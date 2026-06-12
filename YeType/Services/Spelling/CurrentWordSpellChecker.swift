@@ -63,6 +63,24 @@ final class CurrentWordSpellChecker {
         return guesses ?? []
     }
 
+    /// Whether `word` is a valid PREFIX of one or more real words — i.e. the user is partway through
+    /// typing a correct word, not making an error. Uses `NSSpellChecker`'s completion engine, which
+    /// returns words that start with the partial text. This distinguishes "underst" (a prefix of
+    /// "understand" — keep completing in gray) from "beleive" (a genuine misspelling with no valid
+    /// completion — offer a green correction). Returns false for languages the OS has no dictionary
+    /// for, so callers fall back to their own checks there.
+    func hasValidCompletions(for word: String) -> Bool {
+        guard (word as NSString).length >= 2 else { return true }
+        let fullRange = NSRange(location: 0, length: (word as NSString).length)
+        let completions = NSSpellChecker.shared.completions(
+            forPartialWordRange: fullRange,
+            in: word,
+            language: nil,
+            inSpellDocumentWithTag: documentTag
+        )
+        return (completions?.isEmpty == false)
+    }
+
     /// The single instant correction to offer for `word`: the top native guess that is a different
     /// single word, recased to match the typo's capitalization. `nil` when there is no usable guess.
     func bestCorrection(for word: String) -> String? {

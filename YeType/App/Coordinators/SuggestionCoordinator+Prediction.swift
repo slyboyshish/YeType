@@ -153,11 +153,14 @@ extension SuggestionCoordinator {
                 automaticallyFixTypos: settingsSnapshot.automaticallyFixTypos
             ),
             isTypo: { word in
-                // NSSpellChecker handles whatever languages the OS has installed (usually English).
-                // It frequently lacks Russian and other languages, so a Cyrillic typo slips through as
-                // "not misspelled". Fall back to our own bundled SymSpell dictionaries (ru-100k etc.):
-                // if they can offer a correction, the word is a typo. `bestCorrection` returns nil when
-                // the word is already in the dictionary, so correct words are not flagged.
+                // A word still being typed that is a valid prefix of a real word ("underst" → ...
+                // "understand") is NOT an error — let the gray completion finish it instead of
+                // flashing a green correction. Only genuine misspellings (no valid completion) get
+                // corrected. This is the user's rule: correct-so-far → gray completion; wrong → green.
+                if spellChecker.hasValidCompletions(for: word) { return false }
+                // NSSpellChecker handles whatever languages the OS has (usually English). It lacks
+                // Russian etc., so a Cyrillic typo slips through as "not misspelled"; fall back to our
+                // bundled SymSpell dictionaries with a strict (edit-distance 1) test.
                 if spellChecker.isTypo(word) { return true }
                 return symSpellLooksLikeTypo(for: word, precedingText: rawContext.precedingText)
             },
