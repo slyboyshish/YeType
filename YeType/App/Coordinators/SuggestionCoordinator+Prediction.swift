@@ -152,7 +152,15 @@ extension SuggestionCoordinator {
                 offerTypoCorrections: settingsSnapshot.offerTypoCorrections,
                 automaticallyFixTypos: settingsSnapshot.automaticallyFixTypos
             ),
-            isTypo: { spellChecker.isTypo($0) },
+            isTypo: { word in
+                // NSSpellChecker handles whatever languages the OS has installed (usually English).
+                // It frequently lacks Russian and other languages, so a Cyrillic typo slips through as
+                // "not misspelled". Fall back to our own bundled SymSpell dictionaries (ru-100k etc.):
+                // if they can offer a correction, the word is a typo. `bestCorrection` returns nil when
+                // the word is already in the dictionary, so correct words are not flagged.
+                if spellChecker.isTypo(word) { return true }
+                return bestCorrection(for: word, precedingText: rawContext.precedingText) != nil
+            },
             bestCorrection: {
                 bestCorrection(
                     for: $0,
