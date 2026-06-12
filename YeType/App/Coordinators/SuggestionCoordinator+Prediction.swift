@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Logging
 
@@ -11,6 +12,39 @@ extension SuggestionCoordinator {
     /// above a fast typist's inter-key interval (~120-250ms) so mid-burst keystrokes defer the model,
     /// while a natural end-of-word pause still gets a phrase continuation promptly.
     static let modelIdleDelaySeconds: TimeInterval = 0.35
+
+    /// Instant dictionary suggestion straight off the keystroke, without waiting for the host to
+    /// publish the new text to AX. Qt (Telegram) publishes hundreds of milliseconds late, which the
+    /// user experienced as "huge delay, the whole point of the app is gone". The typed character is
+    /// known from the CGEvent, so we predict the post-keystroke snapshot and run the (sub-5ms)
+    /// dictionary paths against it immediately. The session reconciler tolerates the host lagging
+    /// behind the optimistic anchor (live text a strict prefix of it); a host-side divergence
+    /// (autocorrect, IME) invalidates the session on the next poll, which is self-correcting.
+    /// The slower model path still waits for the real publish + typing pause as before.
+    func presentOptimisticDictionarySuggestion(for event: CapturedInputEvent) {
+        guard event.kind == .textMutation,
+              interactionState.activeSession == nil,
+              event.characters.count == 1,
+              let scalar = event.characters.unicodeScalars.first,
+              !CharacterSet.controlCharacters.contains(scalar),
+              !CharacterSet.whitespacesAndNewlines.contains(scalar),
+              !event.flags.contains(.maskCommand),
+              !event.flags.contains(.maskControl)
+        else {
+            return
+        }
+        guard case .supported = focusModel.snapshot.capability,
+              let baseContext = focusModel.snapshot.context,
+              baseContext.selection.length == 0
+        else {
+            return
+        }
+        let optimisticContext = baseContext.appendingTypedText(event.characters)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            _ = await self.handleCurrentWordCompletion(rawContext: optimisticContext, workID: 0)
+        }
+    }
 
     func schedulePrediction() {
         if let disabledReason = currentDisabledReason(focusSnapshot: focusModel.snapshot) {

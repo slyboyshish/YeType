@@ -96,6 +96,11 @@ final class SuggestionCoordinator: ObservableObject {
     /// our event taps ("Observer tap was disabled by system"), which the user experienced as
     /// suggestions dying after a few words. Dictionary completion/correction is cheap and unaffected.
     var lastKeystrokeAt = Date.distantPast
+    /// Pending deferred overlay-hide from the typing flow. While the user types, each keystroke
+    /// invalidates the current suggestion and the next (near-instant) one replaces it; hiding the
+    /// panel in between made the ghost blink out on every key, which read as "nothing works" at
+    /// speed. The hide is parked here and cancelled by the next `presentOverlay`.
+    var pendingOverlayHideTask: Task<Void, Never>?
     /// Correlation ID for the most recently built `SuggestionRequest`. Stamped onto every
     /// state-transition log line so all events tied to one suggestion (debounce → generating →
     /// ready → accepted/rejected) can be joined with a single `jq` filter on `request_id`.

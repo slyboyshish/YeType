@@ -188,13 +188,25 @@ extension SuggestionCoordinator {
         if event.shouldClearSuggestion {
             cancelPredictionWork()
             clearSuggestion(clearDiagnostics: true)
-            hideOverlay(reason: SuggestionSessionReconciler.overlayHideReason(for: event))
+            // Typing keeps the panel up briefly so the replacement suggestion swaps in place
+            // instead of the ghost blinking out on every key; deliberate exits hide instantly.
+            let hideReason = SuggestionSessionReconciler.overlayHideReason(for: event)
+            switch event.kind {
+            case .textMutation, .shortcutMutation:
+                hideOverlayAfterTypingGrace(reason: hideReason)
+            default:
+                hideOverlay(reason: hideReason)
+            }
             if !event.shouldSchedulePrediction {
                 state = .idle
             }
         }
 
         if event.shouldSchedulePrediction {
+            // Instant path first: dictionary completion/correction computed from the keystroke
+            // itself, so the ghost appears in ~10-20ms even in hosts whose AX publish lags by
+            // hundreds of ms (Telegram/Qt). See `presentOptimisticDictionarySuggestion`.
+            presentOptimisticDictionarySuggestion(for: event)
             // Same Chromium AX-publish race as the with-session paths below: the CGEvent tap runs
             // *before* the host app processes the keystroke, so a synchronous `refreshNow()` here
             // reads pre-keystroke text and feeds it into generation. The result is a suggestion
@@ -215,13 +227,13 @@ extension SuggestionCoordinator {
     /// Interval between AX polls while waiting for the host publish. Same order of magnitude as
     /// the focus poll itself (default 80ms) but tighter so we catch the publish promptly without
     /// burning CPU on AX queries that are themselves 5–15ms each.
-    private static let hostPublishPollIntervalMs = 30
+    private static let hostPublishPollIntervalMs = 15
 
     /// First-retry interval after the immediate (elapsed 0) poll, which runs inside the keystroke's
     /// own tap callback before the host has even processed the key and therefore always misses. A
     /// short first retry catches fast-publishing native apps in ~10ms instead of making them wait a
     /// full steady interval; slow Chromium hosts fall through to `hostPublishPollIntervalMs` below.
-    private static let hostPublishFirstPollIntervalMs = 10
+    private static let hostPublishFirstPollIntervalMs = 5
 
     /// Schedules a fresh prediction once the host app has actually published the new
     /// contenteditable text to AX. The previous fix waited a fixed 150ms — see PR #376 — but the
@@ -333,8 +345,12 @@ extension SuggestionCoordinator {
 
             invalidateActiveSuggestion(
                 reason: SuggestionSessionReconciler.overlayHideReason(for: event),
-                clearDiagnostics: false
+                clearDiagnostics: false,
+                useTypingGrace: true
             )
+            // Replace the just-invalidated ghost immediately from the keystroke itself; without
+            // this, the with-session typing path waited for the host's (slow on Qt) AX publish.
+            presentOptimisticDictionarySuggestion(for: event)
             if event.shouldSchedulePrediction {
                 schedulePredictionAfterHostPublishDelay()
             }
@@ -343,7 +359,8 @@ extension SuggestionCoordinator {
         case .shortcutMutation:
             invalidateActiveSuggestion(
                 reason: "Overlay hidden because a shortcut changed the text and invalidated the current suggestion.",
-                clearDiagnostics: false
+                clearDiagnostics: false,
+                useTypingGrace: true
             )
             if event.shouldSchedulePrediction {
                 schedulePredictionAfterHostPublishDelay()

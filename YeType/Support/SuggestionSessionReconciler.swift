@@ -194,6 +194,18 @@ enum SuggestionSessionReconciler {
             )
         }
 
+        // Optimistic keystroke session: the anchor was predicted from the keystroke itself, ahead of
+        // the host's AX publish (Qt/Telegram lags by hundreds of ms), so the live text is briefly a
+        // strict PREFIX of the anchor. Hold the session until the host catches up; if it never does
+        // (the keystroke was swallowed) the prediction pipeline re-anchors on real text anyway, and a
+        // divergent publish (autocorrect/IME) still fails this prefix test and invalidates below.
+        if session.baseContext.precedingText.hasPrefix(liveContext.precedingText) {
+            return tolerateTransientPostInsertionLag(
+                session: session,
+                pendingInsertionConsumedCount: pendingInsertionConsumedCount
+            )
+        }
+
         return .invalid("Overlay hidden because text before the caret no longer matches the suggestion anchor.")
     }
 

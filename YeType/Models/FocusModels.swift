@@ -313,3 +313,43 @@ struct FocusedApplicationIdentity: Equatable {
     let applicationName: String
     let bundleIdentifier: String
 }
+
+
+extension FocusedInputSnapshot {
+    /// A copy of this snapshot as it will read once the just-typed text lands in the host field.
+    ///
+    /// Drives the optimistic keystroke path: Qt (Telegram) and some Electron hosts publish their
+    /// post-keystroke text to AX hundreds of milliseconds late, so waiting for the publish made
+    /// every suggestion feel laggy. The typed character is already known from the CGEvent, so the
+    /// dictionary paths can run against this predicted snapshot immediately; the reconciler treats
+    /// the not-yet-published host state as transient (live text being a strict prefix of the
+    /// session anchor) until AX catches up.
+    func appendingTypedText(_ typed: String) -> FocusedInputSnapshot {
+        let typedUTF16 = (typed as NSString).length
+        // Shift the caret by roughly one glyph so the ghost lands where the caret is about to be.
+        // `observedCharWidth` is the field's own measured average; the caret rect's width is the
+        // next-best stand-in. Exact placement is corrected on the next successful AX poll.
+        let advance = observedCharWidth ?? max(caretRect.width, 6)
+        return FocusedInputSnapshot(
+            applicationName: applicationName,
+            bundleIdentifier: bundleIdentifier,
+            processIdentifier: processIdentifier,
+            elementIdentifier: elementIdentifier,
+            role: role,
+            subrole: subrole,
+            caretRect: caretRect.offsetBy(dx: advance, dy: 0),
+            inputFrameRect: inputFrameRect,
+            caretSource: caretSource,
+            caretQuality: caretQuality,
+            observedCharWidth: observedCharWidth,
+            precedingText: precedingText + typed,
+            trailingText: trailingText,
+            selection: NSRange(location: selection.location + typedUTF16, length: 0),
+            isSecure: isSecure,
+            isIntegratedTerminal: isIntegratedTerminal,
+            focusChangeSequence: focusChangeSequence,
+            focusedURLString: focusedURLString,
+            resolvedFieldStyle: resolvedFieldStyle
+        )
+    }
+}

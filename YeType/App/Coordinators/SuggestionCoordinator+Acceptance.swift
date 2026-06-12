@@ -449,12 +449,17 @@ extension SuggestionCoordinator {
 
     func invalidateActiveSuggestion(
         reason: String,
-        clearDiagnostics: Bool = true
+        clearDiagnostics: Bool = true,
+        useTypingGrace: Bool = false
     ) {
         YeTypeLogger.suggestion.debug("Invalidating active suggestion: \(reason)")
         cancelPredictionWork()
         clearSuggestion(clearDiagnostics: clearDiagnostics)
-        hideOverlay(reason: reason)
+        if useTypingGrace {
+            hideOverlayAfterTypingGrace(reason: reason)
+        } else {
+            hideOverlay(reason: reason)
+        }
         state = .idle
     }
 
@@ -607,6 +612,10 @@ extension SuggestionCoordinator {
             isCorrection: isCorrection,
             resolvedFieldStyle: context.resolvedFieldStyle
         )
+        // A new suggestion is replacing the old one — cancel any parked typing-flow hide so the
+        // panel swaps content instead of blinking out and back.
+        pendingOverlayHideTask?.cancel()
+        pendingOverlayHideTask = nil
         if let message = overlayPresenter.present(
             text: text,
             geometry: geometry,
@@ -617,7 +626,22 @@ extension SuggestionCoordinator {
     }
 
     func hideOverlay(reason: String) {
+        pendingOverlayHideTask?.cancel()
+        pendingOverlayHideTask = nil
         latestOverlayMessage = overlayPresenter.hide(reason: reason)
+    }
+
+    /// Typing-flow hide: keeps the panel up for a beat so the next keystroke's suggestion REPLACES
+    /// the text in place. Hides for real only when no replacement arrives (end of a word with no
+    /// candidate, user stopped typing into a dead end).
+    func hideOverlayAfterTypingGrace(reason: String) {
+        pendingOverlayHideTask?.cancel()
+        pendingOverlayHideTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.pendingOverlayHideTask = nil
+            self.hideOverlay(reason: reason)
+        }
     }
 
     func logStage(
