@@ -159,7 +159,7 @@ extension SuggestionCoordinator {
                 // if they can offer a correction, the word is a typo. `bestCorrection` returns nil when
                 // the word is already in the dictionary, so correct words are not flagged.
                 if spellChecker.isTypo(word) { return true }
-                return bestCorrection(for: word, precedingText: rawContext.precedingText) != nil
+                return symSpellLooksLikeTypo(for: word, precedingText: rawContext.precedingText)
             },
             bestCorrection: {
                 bestCorrection(
@@ -220,6 +220,23 @@ extension SuggestionCoordinator {
 
         return symSpellCorrector.bestCorrection(for: word, language: language)
             ?? spellChecker.bestCorrection(for: word)
+    }
+
+    /// Strict, conservative typo test for languages the OS spell checker lacks (e.g. Russian). Used
+    /// only as a fallback after `NSSpellChecker` says the word is fine, so correctly-typed words are
+    /// not constantly flagged (which would bury the continuation suggestion under a green correction).
+    private func symSpellLooksLikeTypo(for word: String, precedingText: String) -> Bool {
+        let enabledLanguages = SpellingDictionaryCatalog.languages(
+            for: settingsSnapshot.enabledSpellingDictionaryCodes
+        )
+        guard let language = spellingLanguageResolver.resolve(
+            precedingText: precedingText,
+            currentWord: word,
+            enabledLanguages: enabledLanguages
+        ) else {
+            return false
+        }
+        return symSpellCorrector.looksLikeTypo(for: word, language: language)
     }
 
     /// Replaces a completed typo after Space without creating a visible correction session.

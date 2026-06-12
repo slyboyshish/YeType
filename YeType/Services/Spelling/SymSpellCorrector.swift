@@ -68,6 +68,25 @@ nonisolated final class SymSpellCorrector: @unchecked Sendable {
         return TypoCaseTransfer.applying(caseOf: word, to: suggestion.term)
     }
 
+    /// Conservative "is this a real typo" test for languages the OS spell checker can't judge
+    /// (e.g. Russian). A bare frequency dictionary cannot distinguish a misspelling from a valid but
+    /// rare/inflected word, so flagging anything merely absent from the top-N list constantly
+    /// mislabels correct words as typos and buries the continuation suggestion under a green
+    /// correction. We require a STRONG signal: the closest dictionary entry is exactly one edit away
+    /// (one slip, not a different word form) and the word is long enough that one-edit minimal pairs
+    /// (кот/код) don't trigger.
+    func looksLikeTypo(for word: String, language: SpellingDictionaryLanguage = .english) -> Bool {
+        guard word.count >= 5 else { return false }
+        guard let symSpell = cachedIndexOrRequestLoad(for: language) else { return false }
+        let lowered = word.lowercased()
+        guard let suggestion = symSpell.bestSuggestion(for: lowered),
+              suggestion.distance == 1,
+              suggestion.term.lowercased() != lowered else {
+            return false
+        }
+        return true
+    }
+
     /// Test seam: synchronously publishes a small in-memory dictionary without touching the bundle.
     func loadForTesting(
         contents: String,

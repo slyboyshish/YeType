@@ -24,6 +24,9 @@ enum CompletionSuppressionReason: String, Sendable, Equatable {
     case echoesPrecedingText
     /// Printable characters survived but carried control/replacement glyphs the safety gate rejects.
     case unsafeToInsert
+    /// The completion's script disagrees with what the user is writing (e.g. a Latin word offered
+    /// while typing Cyrillic), which on a multilingual base model is almost always noise.
+    case scriptMismatch
 }
 
 /// Outcome of normalizing one raw completion: the ghost text, plus the attributable reason when that
@@ -161,7 +164,49 @@ enum SuggestionTextNormalizer {
             )
         }
 
+        // Script-match gate: a multilingual base model frequently offers an English word mid-Russian
+        // (or vice versa). When the text the user is actively writing is clearly one script and the
+        // suggestion clearly starts in the other, drop it — it reads as noise the user never wants.
+        if scriptsConflict(precedingText: request.context.precedingText, suggestion: normalized) {
+            return SuggestionNormalizationResult(text: "", suppression: .scriptMismatch)
+        }
+
         return SuggestionNormalizationResult(text: normalized, suppression: nil)
+    }
+
+    /// True when the user's recent text is dominantly one alphabet and the suggestion begins in the
+    /// other (Cyrillic vs Latin). Neutral input (digits, punctuation, emoji) never conflicts, and an
+    /// undetermined side passes through, so this only fires on a confident mismatch.
+    static func scriptsConflict(precedingText: String, suggestion: String) -> Bool {
+        guard let suggestionScript = leadingAlphabetScript(suggestion) else { return false }
+        guard let contextScript = trailingAlphabetScript(precedingText) else { return false }
+        return suggestionScript != contextScript
+    }
+
+    private enum AlphabetScript { case latin, cyrillic }
+
+    /// Script of the first alphabetic character in `text` (ignoring leading spaces/punctuation).
+    private static func leadingAlphabetScript(_ text: String) -> AlphabetScript? {
+        for scalar in text.unicodeScalars {
+            if let script = Self.script(of: scalar) { return script }
+        }
+        return nil
+    }
+
+    /// Script of the last alphabetic character in `text` — what the user is currently writing.
+    private static func trailingAlphabetScript(_ text: String) -> AlphabetScript? {
+        for scalar in text.unicodeScalars.reversed() {
+            if let script = Self.script(of: scalar) { return script }
+        }
+        return nil
+    }
+
+    private static func script(of scalar: Unicode.Scalar) -> AlphabetScript? {
+        switch scalar.value {
+        case 0x0400...0x04FF: return .cyrillic            // Cyrillic block
+        case 0x41...0x5A, 0x61...0x7A: return .latin      // Basic Latin letters
+        default: return nil                                // digits, punctuation, emoji, other
+        }
     }
 
     /// Names the most specific cause of an empty normalization outcome at the safety gate. The gate
