@@ -6,7 +6,14 @@
 # Использование:  ./release.sh <версия>     напр.  ./release.sh 1.1
 set -e
 
-VERSION="${1:?Укажи версию, напр.: ./release.sh 1.1}"
+# Версия: если не передали аргумент — авто-инкремент последней цифры текущей
+# (1.0 -> 1.1 -> 1.2 ...), чтобы можно было просто запускать ./release.sh без номера.
+if [ -z "$1" ]; then
+  CUR=$(plutil -extract CFBundleShortVersionString raw YeTypeInfo.plist)
+  VERSION="${CUR%.*}.$(( ${CUR##*.} + 1 ))"
+else
+  VERSION="$1"
+fi
 REPO="slyboyshish/YeType"
 CERT="Apple Development: viber33e.88@gmail.com (W9PHGU8Q2H)"
 BIN="build/SourcePackages/artifacts/sparkle/Sparkle/bin"
