@@ -23,6 +23,7 @@ enum BrowserAppDetector {
         "com.google.chrome",
         "org.mozilla.firefox",
         "company.thebrowser.browser",  // Arc
+        "company.thebrowser.dia",      // Dia
         "com.brave.browser",
         "com.microsoft.edgemac"
     ]
@@ -32,6 +33,7 @@ enum BrowserAppDetector {
     private static let chromiumBundlePrefixes: [String] = [
         "com.google.chrome",
         "company.thebrowser.browser",  // Arc
+        "company.thebrowser.dia",      // Dia (The Browser Company, Chromium-based)
         "com.brave.browser",
         "com.microsoft.edgemac"
     ]
@@ -51,9 +53,11 @@ enum BrowserAppDetector {
     /// here without a broad `com.todesktop.` prefix that would also prime unrelated ToDesktop apps.
     private static let electronEditorBundleIdentifiers: Set<String> = [
         "com.clickup.desktop-app",
-        "com.microsoft.vscode",          // Visual Studio Code
-        "com.microsoft.vscodeinsiders",  // VS Code - Insiders
-        "com.vscodium"                   // VSCodium (FOSS VS Code build)
+        "com.microsoft.vscode",            // Visual Studio Code
+        "com.microsoft.vscodeinsiders",    // VS Code - Insiders
+        "com.vscodium",                    // VSCodium (FOSS VS Code build)
+        "com.anthropic.claudefordesktop",  // Claude desktop
+        "com.hnc.discord"                  // Discord
     ]
 
     /// Broad check: is the user typing inside any web browser? Used for prompt tone hints.
