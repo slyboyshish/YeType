@@ -26,6 +26,14 @@ struct FocusCapabilityFlickerGate {
     /// real focus-loss perceptibly at typical poll cadence.
     static let requiredConsecutiveBlockedReads = 2
 
+    /// How many consecutive Unsupported snapshots must be observed before the gate releases. Qt and
+    /// Electron windows (Telegram chats, Discord) briefly republish with *no* focused AX element while
+    /// the surrounding view updates — capability collapses to Unsupported ("No focused Accessibility
+    /// element") for several polls even though the user never left the composer. At the ~50 ms poll
+    /// cadence this allows ~250 ms of transient loss before hiding, which robustly covers the Qt churn
+    /// while still tearing the overlay down promptly when the user genuinely leaves the field.
+    static let requiredConsecutiveUnsupportedReads = 5
+
     /// Outcome the caller acts on.
     enum Decision: Equatable {
         /// Apply this snapshot as-is.
@@ -37,6 +45,7 @@ struct FocusCapabilityFlickerGate {
 
     private var lastDeliveredSupportedElementID: String?
     private var consecutiveBlockedReadCount: Int = 0
+    private var consecutiveUnsupportedReadCount: Int = 0
 
     /// Feed every snapshot through here before letting it drive coordinator state.
     mutating func evaluate(_ snapshot: FocusSnapshot) -> Decision {
@@ -44,6 +53,7 @@ struct FocusCapabilityFlickerGate {
         case .supported:
             lastDeliveredSupportedElementID = snapshot.context?.elementIdentifier
             consecutiveBlockedReadCount = 0
+            consecutiveUnsupportedReadCount = 0
             return .apply
 
         case .blocked:
@@ -68,11 +78,23 @@ struct FocusCapabilityFlickerGate {
             return .suppress(pendingBlockedReadCount: consecutiveBlockedReadCount)
 
         case .unsupported:
-            // Unsupported is "no focused text input at all" — never debounce; the user has left the
-            // field and the overlay must hide immediately.
-            lastDeliveredSupportedElementID = nil
-            consecutiveBlockedReadCount = 0
-            return .apply
+            // Normally Unsupported means the user left the field. But Qt/Electron windows (Telegram
+            // chats, Discord) transiently drop the focused AX element for a few polls while the view
+            // updates, even though the composer is still focused. Debounce a short burst the same way
+            // as Blocked — only when we were just Supported — so the overlay survives the churn; if it
+            // stays Unsupported past the threshold the user really left, so release and hide.
+            guard lastDeliveredSupportedElementID != nil else {
+                consecutiveUnsupportedReadCount = 0
+                return .apply
+            }
+            consecutiveUnsupportedReadCount += 1
+            if consecutiveUnsupportedReadCount >= Self.requiredConsecutiveUnsupportedReads {
+                lastDeliveredSupportedElementID = nil
+                consecutiveBlockedReadCount = 0
+                consecutiveUnsupportedReadCount = 0
+                return .apply
+            }
+            return .suppress(pendingBlockedReadCount: consecutiveUnsupportedReadCount)
         }
     }
 }
