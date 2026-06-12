@@ -89,6 +89,12 @@ nonisolated final class SymSpellCorrector: @unchecked Sendable {
         return symSpell.contains(word)
     }
 
+    /// The word's corpus frequency in the language's dictionary, or nil when absent / index not ready.
+    func frequency(of word: String, language: SpellingDictionaryLanguage = .english) -> Int64? {
+        guard let symSpell = cachedIndexOrRequestLoad(for: language) else { return nil }
+        return symSpell.frequency(of: word)
+    }
+
     /// Conservative "is this a real typo" test for languages the OS spell checker can't judge
     /// (e.g. Russian). A bare frequency dictionary cannot distinguish a misspelling from a valid but
     /// rare/inflected word, so flagging anything merely absent from the top-N list constantly

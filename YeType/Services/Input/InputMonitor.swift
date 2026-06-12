@@ -109,6 +109,13 @@ final class InputMonitor {
     private var toggleTap: CFMachPort?
     private var toggleRunLoopSource: CFRunLoopSource?
 
+    /// Watchdog that revives event taps the system silently disabled. macOS turns a tap off when its
+    /// callback misses the latency deadline (`tapDisabledByTimeout`) — observed in production under
+    /// llama-decode CPU pressure. The in-callback re-enable only fires when the disable EVENT is
+    /// delivered, which is not guaranteed; this timer is the belt-and-braces recovery so suggestions
+    /// can never silently die for the rest of the session.
+    private var tapWatchdogTimer: Timer?
+
     /// Tracks whether the consuming tap currently owns accept-key semantics. This is separate
     /// from "a suggestion exists": the observer should only suppress accept-key callbacks when a
     /// real default tap can make the consume/pass-through decision for that same physical key.
@@ -139,11 +146,38 @@ final class InputMonitor {
     func start() {
         YeTypeLogger.app.info("Input monitor starting")
         refresh()
+        startTapWatchdog()
+    }
+
+    /// See `tapWatchdogTimer`. Two seconds keeps worst-case recovery imperceptible while the check
+    /// itself (three `CGEvent.tapIsEnabled` reads) is effectively free.
+    private func startTapWatchdog() {
+        tapWatchdogTimer?.invalidate()
+        tapWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.reviveDisabledTaps()
+            }
+        }
+    }
+
+    private func reviveDisabledTaps() {
+        let taps: [(CFMachPort?, String)] = [
+            (observerTap, "observer"),
+            (acceptTap, "accept"),
+            (toggleTap, "toggle")
+        ]
+        for (tap, name) in taps {
+            guard let tap, !CGEvent.tapIsEnabled(tap: tap) else { continue }
+            CGEvent.tapEnable(tap: tap, enable: true)
+            YeTypeLogger.app.warning("Watchdog re-enabled the \(name) tap (system had disabled it)")
+        }
     }
 
     /// Removes both taps and stops observing keyboard events.
     func stop() {
         YeTypeLogger.app.info("Input monitor stopping")
+        tapWatchdogTimer?.invalidate()
+        tapWatchdogTimer = nil
         destroyAcceptTap()
         destroyToggleTap()
         destroyObserverTap()

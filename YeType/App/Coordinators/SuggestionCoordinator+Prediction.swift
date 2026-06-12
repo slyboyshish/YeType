@@ -7,6 +7,11 @@ import Logging
 extension SuggestionCoordinator {
     // MARK: - Prediction Pipeline
 
+    /// Minimum keyboard-idle time before the LLM may run (the typing-burst gate threshold). Slightly
+    /// above a fast typist's inter-key interval (~120-250ms) so mid-burst keystrokes defer the model,
+    /// while a natural end-of-word pause still gets a phrase continuation promptly.
+    static let modelIdleDelaySeconds: TimeInterval = 0.35
+
     func schedulePrediction() {
         if let disabledReason = currentDisabledReason(focusSnapshot: focusModel.snapshot) {
             disablePredictions(reason: disabledReason)
@@ -73,6 +78,28 @@ extension SuggestionCoordinator {
         // misspelling in green, or stay silent rather than append a non-word. The model is used only
         // to continue the phrase AFTER a finished word.
         if await handleCurrentWordCompletion(rawContext: rawContext, workID: workID) {
+            return
+        }
+
+        // Typing-burst gate: everything below this line runs the LLM (prompt build + llama decode,
+        // 200-450ms of all-core CPU). During a fast typing burst each keystroke would start a decode
+        // whose result is guaranteed stale, saturating the fanless machine — under that load macOS
+        // disabled our event taps and suggestions died until restart. Defer the model to the next
+        // pause instead; the dictionary paths above already gave instant feedback for this keystroke.
+        let sinceKeystroke = Date().timeIntervalSince(lastKeystrokeAt)
+        if sinceKeystroke < Self.modelIdleDelaySeconds {
+            state = .debouncing
+            let remainingMilliseconds = Int((Self.modelIdleDelaySeconds - sinceKeystroke) * 1000) + 10
+            let deferredWorkID = workController.replaceDebouncedWork(
+                delayMilliseconds: remainingMilliseconds
+            ) { [weak self] deferredWorkID in
+                await self?.generateFromCurrentFocus(workID: deferredWorkID)
+            }
+            logStage(
+                "model-deferred-typing",
+                workID: deferredWorkID,
+                message: "Deferred model generation \(remainingMilliseconds)ms until the typing burst pauses."
+            )
             return
         }
 
@@ -308,26 +335,36 @@ extension SuggestionCoordinator {
         let completionPreview = symSpellCorrector.bestCompletion(for: partial, language: language) ?? "<nil>"
         YeTypeLogger.suggestion.notice("MIDWORD word=\(partial) lang=\(language.rawValue) completion=\(completionPreview) contains=\(symSpellCorrector.contains(partial, language: language))")
 
-        // 1. The word is already a complete, correct word → it's finished. Do NOT extend it (that is
-        //    what turned a typed "привет" into a "приветствие" suggestion). Let the model continue the
-        //    phrase on the next word instead.
-        if symSpellCorrector.contains(partial, language: language) {
-            return false
-        }
-
-        // 2. Unfinished but a valid prefix → gray completion of the missing tail.
+        // 1. Decide between "this word is finished" and "this is an unfinished prefix" by FREQUENCY,
+        //    not by mere dictionary membership. Subtitle corpora list clipped fragments ("эт", "чё")
+        //    as words, so membership alone made the handler treat "эт" as finished and stay silent —
+        //    the user's exact "nothing works" case. Rule: complete when the word is absent from the
+        //    dictionary, OR when its best completion is an order of magnitude more frequent than the
+        //    fragment itself ("это" ≫ "эт" → complete; "привет" ≫ "приветик" stays put because the
+        //    completion is the LESS frequent one).
+        let ownFrequency = symSpellCorrector.frequency(of: partial, language: language)
         if let full = symSpellCorrector.bestCompletion(for: partial, language: language) {
             let fullChars = Array(full)
             if fullChars.count > partial.count {
-                let suffix = String(fullChars[partial.count...])
-                presentCompletion(
-                    suffix: suffix,
-                    fullWord: full,
-                    rawContext: rawContext,
-                    workID: workID
-                )
-                return true
+                let completionFrequency = symSpellCorrector.frequency(of: full, language: language) ?? 0
+                let isFinishedWord = (ownFrequency ?? 0) * 10 >= completionFrequency
+                if !isFinishedWord {
+                    let suffix = String(fullChars[partial.count...])
+                    presentCompletion(
+                        suffix: suffix,
+                        fullWord: full,
+                        rawContext: rawContext,
+                        workID: workID
+                    )
+                    return true
+                }
             }
+        }
+
+        // 2. A genuinely finished word (in the dictionary and not dwarfed by a longer completion) →
+        //    let the model continue the phrase on the next word instead.
+        if symSpellCorrector.contains(partial, language: language) {
+            return false
         }
 
         // 3. Not a prefix and not a word → a misspelling. Offer a replace if the dictionary has a close

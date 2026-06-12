@@ -79,6 +79,13 @@ nonisolated final class SymSpell {
         words[word.lowercased()] != nil
     }
 
+    /// The word's corpus frequency, or nil when it is not in the dictionary. Lets callers weigh a
+    /// fragment that happens to be listed (subtitle corpora include clipped forms like "эт") against
+    /// its far more frequent completion ("это") instead of treating mere membership as "finished".
+    func frequency(of word: String) -> Int64? {
+        words[word.lowercased()]
+    }
+
     /// The most frequent dictionary word that has `prefix` as a strict prefix (and is longer), or nil
     /// when there is none. Case-insensitive; the returned word is the dictionary's lowercase form, so
     /// callers take only the tail past `prefix` for the gray completion. Binary-searches the sorted

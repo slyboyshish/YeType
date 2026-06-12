@@ -90,6 +90,12 @@ final class SuggestionCoordinator: ObservableObject {
     /// `FocusCapabilityFlickerGate` for the rationale and the reproduction (Apple Calendar event
     /// editor).
     var capabilityFlickerGate = FocusCapabilityFlickerGate()
+    /// When the user last pressed a key. Drives the typing-burst gate: while keystrokes arrive in a
+    /// rapid burst, the (expensive) model generation is deferred to the next pause so llama decodes
+    /// don't saturate the fanless machine mid-burst — sustained CPU pressure made the system disable
+    /// our event taps ("Observer tap was disabled by system"), which the user experienced as
+    /// suggestions dying after a few words. Dictionary completion/correction is cheap and unaffected.
+    var lastKeystrokeAt = Date.distantPast
     /// Correlation ID for the most recently built `SuggestionRequest`. Stamped onto every
     /// state-transition log line so all events tied to one suggestion (debounce → generating →
     /// ready → accepted/rejected) can be joined with a single `jq` filter on `request_id`.
