@@ -179,6 +179,7 @@ extension SuggestionCoordinator {
         latestRequestID = request.requestID
 
         state = .generating
+        lastDispatchedPrecedingText = rawContext.precedingText
         logStage(
             "generating",
             workID: workID,
@@ -357,7 +358,10 @@ extension SuggestionCoordinator {
               trailing.trailingSpaceCount == 0 else {
             return false
         }
-        let partial = trailing.result.word
+        // Strip leading punctuation glued to the word ("ничего" typed right after a comma reads as
+        // ",ничего" from AX) — otherwise the dictionary is blind for the entire word that follows
+        // any unspaced comma/bracket/quote, which the user hit constantly in real chats.
+        let partial = String(trailing.result.word.drop(while: { ",.;:!?…—-()[]{}«»\"'".contains($0) }))
         guard partial.count >= 2 else { return false }
 
         let enabledLanguages = SpellingDictionaryCatalog.languages(
@@ -608,9 +612,41 @@ extension SuggestionCoordinator {
         lastAcceptedTail = nil
 
         // Generation numbers are our stale-result guard. If the text changed while the model was
-        // thinking, we drop the answer instead of showing a suggestion for old content.
-        guard liveContext.generation == result.generation else {
-
+        // thinking, we first try to SALVAGE the answer: at live typing speed every continuation
+        // finished "late" (the user had typed 1-3 more characters) and dropping them all meant the
+        // phrase continuation never reached the screen. When the newly typed delta is exactly the
+        // start of the late result, the rest of it is still a valid continuation — show that.
+        if liveContext.generation != result.generation {
+            if let dispatched = lastDispatchedPrecedingText,
+               liveContext.precedingText.hasPrefix(dispatched) {
+                let typedDelta = String(liveContext.precedingText.dropFirst(dispatched.count))
+                if !typedDelta.isEmpty, result.text.hasPrefix(typedDelta) {
+                    let salvaged = String(result.text.dropFirst(typedDelta.count))
+                    if !salvaged.isEmpty {
+                        logStage(
+                            "stale-salvaged",
+                            workID: workID,
+                            generation: result.generation,
+                            message: "Salvaged a late result: typed delta matched its head.",
+                            normalizedOutput: salvaged
+                        )
+                        let session = interactionState.startSession(
+                            fullText: salvaged,
+                            liveContext: liveContext,
+                            latency: result.latency
+                        )
+                        applySessionDiagnostics(session, acceptanceAction: "Salvaged late suggestion.")
+                        state = .ready(text: session.remainingText, latency: session.latency)
+                        presentOverlay(
+                            text: session.remainingText,
+                            at: liveContext.caretRect,
+                            context: liveContext,
+                            isRightToLeft: TextDirectionDetector.isRightToLeft(liveContext.precedingText)
+                        )
+                        return
+                    }
+                }
+            }
             latestRawModelOutput = SuggestionDebugLogger.debugPreview(result.rawText)
             logStage(
                 "stale-drop",

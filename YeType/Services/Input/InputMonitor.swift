@@ -162,8 +162,12 @@ final class InputMonitor {
     private let permissionProvider: @MainActor () -> Bool
     private let suppressionController: InputSuppressionController
 
-    private var observerTap: CFMachPort?
+    private var observerTap: CFMachPort? {
+        didSet { observerTapShared.store(observerTap) }
+    }
     private var observerRunLoopSource: CFRunLoopSource?
+    private let observerTapShared = TapPortBox()
+    nonisolated var observerTapForReenable: CFMachPort? { observerTapShared.load() }
 
     private var acceptTap: CFMachPort? {
         didSet { acceptTapShared.store(acceptTap) }
@@ -353,11 +357,29 @@ final class InputMonitor {
             guard let userInfo else {
                 return Unmanaged.passUnretained(event)
             }
-
-            let monitor = Unmanaged<InputMonitor>.fromOpaque(userInfo).takeUnretainedValue()
-            return MainActor.assumeIsolated {
-                monitor.handleObserverTap(type: type, event: event)
+            // Tap thread. The observer is listen-only — its return value cannot affect delivery —
+            // so the callback only snapshots the event and hands it to the main actor ASYNC. The
+            // previous synchronous main-actor hop meant a busy main thread delayed this callback;
+            // the system then disabled the tap repeatedly mid-typing (watchdog logs showed 6
+            // re-enables in a row) and the pipeline went blind to keystrokes.
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                let monitor = Unmanaged<InputMonitor>.fromOpaque(userInfo).takeUnretainedValue()
+                if let tap = monitor.observerTapForReenable { CGEvent.tapEnable(tap: tap, enable: true) }
+                return Unmanaged.passUnretained(event)
             }
+            guard type == .keyDown else { return Unmanaged.passUnretained(event) }
+            let monitor = Unmanaged<InputMonitor>.fromOpaque(userInfo).takeUnretainedValue()
+            let keyEvent = InputMonitorKeyEvent(
+                keyCode: CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode)),
+                characters: event.unicodeString,
+                flags: event.flags
+            )
+            let isSynthetic = event.getIntegerValueField(.eventSourceUserData)
+                == InputSuppressionController.syntheticEventUserData
+            Task { @MainActor in
+                monitor.handleObserverKeyDownAsync(keyEvent, isSynthetic: isSynthetic)
+            }
+            return Unmanaged.passUnretained(event)
         }
 
         guard let tap = CGEvent.tapCreate(
@@ -378,7 +400,7 @@ final class InputMonitor {
         observerRunLoopSource = source
 
         if let source {
-            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+            CFRunLoopAddSource(TapDispatchThread.shared.runLoop, source, .commonModes)
         }
 
         CGEvent.tapEnable(tap: tap, enable: true)
@@ -505,7 +527,7 @@ final class InputMonitor {
 
     private func destroyObserverTap() {
         if let source = observerRunLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            CFRunLoopRemoveSource(TapDispatchThread.shared.runLoop, source, .commonModes)
         }
         observerRunLoopSource = nil
 
@@ -627,6 +649,19 @@ final class InputMonitor {
         default:
             return Unmanaged.passUnretained(event)
         }
+    }
+
+    /// Async main-actor continuation of the observer tap callback (see the callback comment).
+    /// Mirrors the keyDown branch of `handleObserverTap` minus the CGEvent dependency.
+    func handleObserverKeyDownAsync(_ keyEvent: InputMonitorKeyEvent, isSynthetic: Bool) {
+        if isSynthetic || suppressionController.consumeIfNeeded() {
+            onSuppressedSyntheticInput?()
+            return
+        }
+        guard shouldProcessEventsProvider() else {
+            return
+        }
+        _ = routeObserverKeyDown(keyEvent)
     }
 
     /// Testable observer path for semantic key snapshots.

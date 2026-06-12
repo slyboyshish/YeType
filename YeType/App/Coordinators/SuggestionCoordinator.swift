@@ -101,6 +101,9 @@ final class SuggestionCoordinator: ObservableObject {
     /// panel in between made the ghost blink out on every key, which read as "nothing works" at
     /// speed. The hide is parked here and cancelled by the next `presentOverlay`.
     var pendingOverlayHideTask: Task<Void, Never>?
+    /// The preceding text at the moment the latest model generation was dispatched. Lets `apply`
+    /// salvage late results whose head matches what the user typed meanwhile (see stale-salvage).
+    var lastDispatchedPrecedingText: String?
     /// Correlation ID for the most recently built `SuggestionRequest`. Stamped onto every
     /// state-transition log line so all events tied to one suggestion (debounce → generating →
     /// ready → accepted/rejected) can be joined with a single `jq` filter on `request_id`.
