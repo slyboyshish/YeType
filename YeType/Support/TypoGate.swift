@@ -52,7 +52,9 @@ enum TypoGate {
             return .proceed
         }
         guard let corrected = bestCorrection(current.result.word) else {
-            return .suppress
+            // Misspelled but no correction available (e.g. mid-typo gibberish). Don't go blank —
+            // fall through to a normal continuation so the user always sees something useful.
+            return .proceed
         }
         if settings.automaticallyFixTypos, current.trailingSpaceCount == 1 {
             return .applyCorrection(word: current.result.word, correctedWord: corrected)
@@ -60,6 +62,7 @@ enum TypoGate {
         if settings.offerTypoCorrections {
             return .offerCorrection(word: current.result.word, correctedWord: corrected)
         }
-        return .suppress
+        // Corrections are off: still continue rather than suppress, so typing never dead-ends.
+        return .proceed
     }
 }
