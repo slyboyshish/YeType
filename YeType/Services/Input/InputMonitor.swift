@@ -47,6 +47,71 @@ enum InputMonitorAcceptTapDecision: Equatable {
 ///   This is the only path that consumes events, so it also owns acceptance side effects. Keeping
 ///   insertion and consumption in the same callback prevents the coordinator from hiding the overlay
 ///   before the tap has decided what to do with the original key.
+/// Dedicated thread + runloop for the CONSUMING event taps (accept, toggle).
+///
+/// A consuming (`.defaultTap`) tap stalls delivery of EVERY system keystroke until its callback
+/// returns. With the taps parked on the main runloop, any main-thread work (AX polling, overlay
+/// rendering, model bookkeeping) delayed the callback and the user felt it as keyboard lag across
+/// the whole OS. On this dedicated thread the callback runs immediately; it asks the main actor
+/// for the real decision with a hard 8ms budget and FAILS OPEN (passes the key through) if the
+/// main thread is busy — so YeType can never hold the user's typing hostage. The listen-only
+/// observer tap stays on the main runloop because it does not gate event delivery.
+final class TapDispatchThread: @unchecked Sendable {
+    static let shared = TapDispatchThread()
+    private(set) var runLoop: CFRunLoop!
+
+    private init() {
+        let ready = DispatchSemaphore(value: 0)
+        let thread = Thread { [weak self] in
+            self?.runLoop = CFRunLoopGetCurrent()
+            ready.signal()
+            // Keep the runloop alive forever with a dummy port.
+            let port = NSMachPort()
+            RunLoop.current.add(port, forMode: .common)
+            CFRunLoopRun()
+        }
+        thread.name = "com.kludne.yetype.event-taps"
+        thread.qualityOfService = .userInteractive
+        thread.start()
+        ready.wait()
+    }
+
+    /// Runs `work` on the main actor and waits at most `budgetMs`. Returns nil on timeout, in which
+    /// case the (late) main-actor result is discarded by the caller-side `timedOut` flag inside
+    /// `work` itself — see call sites.
+    static func decideOnMainWithBudget(
+        budgetMs: Int,
+        _ work: @escaping @MainActor () -> Unmanaged<CGEvent>?
+    ) -> Unmanaged<CGEvent>?? {
+        let semaphore = DispatchSemaphore(value: 0)
+        let box = DecisionBox()
+        DispatchQueue.main.async {
+            let verdict = MainActor.assumeIsolated { work() }
+            box.store(verdict)
+            semaphore.signal()
+        }
+        if semaphore.wait(timeout: .now() + .milliseconds(budgetMs)) == .timedOut {
+            return nil
+        }
+        return .some(box.take())
+    }
+
+    private final class DecisionBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var verdict: Unmanaged<CGEvent>?
+        func store(_ v: Unmanaged<CGEvent>?) { lock.lock(); verdict = v; lock.unlock() }
+        func take() -> Unmanaged<CGEvent>? { lock.lock(); defer { lock.unlock() }; return verdict }
+    }
+}
+
+/// Lock-protected CFMachPort holder shared between the main actor (writer) and tap thread (reader).
+final class TapPortBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var port: CFMachPort?
+    func store(_ p: CFMachPort?) { lock.lock(); port = p; lock.unlock() }
+    func load() -> CFMachPort? { lock.lock(); defer { lock.unlock() }; return port }
+}
+
 @MainActor
 final class InputMonitor {
     var onEvent: ((CapturedInputEvent) -> Bool)?
@@ -100,14 +165,23 @@ final class InputMonitor {
     private var observerTap: CFMachPort?
     private var observerRunLoopSource: CFRunLoopSource?
 
-    private var acceptTap: CFMachPort?
+    private var acceptTap: CFMachPort? {
+        didSet { acceptTapShared.store(acceptTap) }
+    }
     private var acceptRunLoopSource: CFRunLoopSource?
+    /// Lock-protected mirror of `acceptTap` readable from the tap thread for timeout re-enables.
+    private let acceptTapShared = TapPortBox()
+    nonisolated var acceptTapForReenable: CFMachPort? { acceptTapShared.load() }
 
     /// Dedicated consuming tap for the global-toggle hotkey. Lives independently of the accept tap
     /// because it must fire even when no suggestion is visible — and even when YeType is globally
     /// disabled, since the whole purpose of the hotkey is to flip that switch back on.
-    private var toggleTap: CFMachPort?
+    private var toggleTap: CFMachPort? {
+        didSet { toggleTapShared.store(toggleTap) }
+    }
     private var toggleRunLoopSource: CFRunLoopSource?
+    private let toggleTapShared = TapPortBox()
+    nonisolated var toggleTapForReenable: CFMachPort? { toggleTapShared.load() }
 
     /// Watchdog that revives event taps the system silently disabled. macOS turns a tap off when its
     /// callback misses the latency deadline (`tapDisabledByTimeout`) — observed in production under
@@ -322,11 +396,27 @@ final class InputMonitor {
             guard let userInfo else {
                 return Unmanaged.passUnretained(event)
             }
-
+            // Runs on the dedicated tap thread (see TapDispatchThread). Cheap checks happen here;
+            // the real decision is fetched from the main actor with a hard budget and fails open,
+            // so a busy main thread can never stall the user's typing.
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                let monitor = Unmanaged<InputMonitor>.fromOpaque(userInfo).takeUnretainedValue()
+                if let tap = monitor.acceptTapForReenable { CGEvent.tapEnable(tap: tap, enable: true) }
+                return Unmanaged.passUnretained(event)
+            }
+            guard type == .keyDown else { return Unmanaged.passUnretained(event) }
+            if event.getIntegerValueField(.eventSourceUserData) == InputSuppressionController.syntheticEventUserData {
+                return Unmanaged.passUnretained(event)
+            }
             let monitor = Unmanaged<InputMonitor>.fromOpaque(userInfo).takeUnretainedValue()
-            return MainActor.assumeIsolated {
+            let decision = TapDispatchThread.decideOnMainWithBudget(budgetMs: 8) {
                 monitor.handleAcceptTap(type: type, event: event)
             }
+            guard let decision else {
+                // Main thread busy: fail open instantly rather than lag the keyboard.
+                return Unmanaged.passUnretained(event)
+            }
+            return decision
         }
 
         // Tail-append so this tap runs *after* the head-inserted observer. The observer is
@@ -350,7 +440,7 @@ final class InputMonitor {
         acceptRunLoopSource = source
 
         if let source {
-            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+            CFRunLoopAddSource(TapDispatchThread.shared.runLoop, source, .commonModes)
         }
 
         CGEvent.tapEnable(tap: tap, enable: true)
@@ -367,10 +457,22 @@ final class InputMonitor {
                 return Unmanaged.passUnretained(event)
             }
 
+            // Tap thread; budgeted main-actor decision, fail-open (see accept tap).
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                let monitor = Unmanaged<InputMonitor>.fromOpaque(userInfo).takeUnretainedValue()
+                if let tap = monitor.toggleTapForReenable { CGEvent.tapEnable(tap: tap, enable: true) }
+                return Unmanaged.passUnretained(event)
+            }
+            guard type == .keyDown else { return Unmanaged.passUnretained(event) }
+            if event.getIntegerValueField(.eventSourceUserData) == InputSuppressionController.syntheticEventUserData {
+                return Unmanaged.passUnretained(event)
+            }
             let monitor = Unmanaged<InputMonitor>.fromOpaque(userInfo).takeUnretainedValue()
-            return MainActor.assumeIsolated {
+            let decision = TapDispatchThread.decideOnMainWithBudget(budgetMs: 8) {
                 monitor.handleToggleTap(type: type, event: event)
             }
+            guard let decision else { return Unmanaged.passUnretained(event) }
+            return decision
         }
 
         // Head-inserted so the toggle hotkey is decided before any other tap (including the accept
@@ -395,7 +497,7 @@ final class InputMonitor {
         toggleRunLoopSource = source
 
         if let source {
-            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+            CFRunLoopAddSource(TapDispatchThread.shared.runLoop, source, .commonModes)
         }
 
         CGEvent.tapEnable(tap: tap, enable: true)
@@ -419,7 +521,7 @@ final class InputMonitor {
             return
         }
         if let source = acceptRunLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            CFRunLoopRemoveSource(TapDispatchThread.shared.runLoop, source, .commonModes)
         }
         acceptRunLoopSource = nil
 
@@ -435,7 +537,7 @@ final class InputMonitor {
             return
         }
         if let source = toggleRunLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            CFRunLoopRemoveSource(TapDispatchThread.shared.runLoop, source, .commonModes)
         }
         toggleRunLoopSource = nil
 
